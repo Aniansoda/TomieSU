@@ -40,7 +40,7 @@ def main() -> int:
         if status == 0 and args.stage_assets:
             assets = root / "userspace/tsud/bin/aarch64"
             assets.mkdir(parents=True, exist_ok=True)
-            suffixes = ("kernelsu",) if args.mode == "root" else ("kernelsu", "susfs_guard_lkm")
+            suffixes = ("tomiesu",) if args.mode == "root" else ("tomiesu", "susfs_guard_lkm")
             for suffix in suffixes:
                 source = out / f"aarch64/{kmi}_{suffix}.ko"
                 if not source.is_file():
