@@ -244,9 +244,9 @@ base {
 
 dependencies {
     implementation("com.android.tools.build:apksig:9.4.1")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.83")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
     // GhostLock 隐藏环境配置引擎（HOCON 解析）
-    implementation("com.typesafe:config:1.4.3")
+    implementation("com.typesafe:config:1.4.10")
     implementation(libs.androidx.exifinterface)
     implementation(libs.reorderable)
     implementation(libs.androidx.activity.compose)
