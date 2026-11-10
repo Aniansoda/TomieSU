@@ -79,9 +79,14 @@ if [[ "$TOMIESU_MODE" != susfs ]]; then
     llvm-strip -d "/artifacts/${TOMIESU_KMI}_${ko_suffix}"
     readelf -h "/artifacts/${TOMIESU_KMI}_${ko_suffix}"
     if [[ "$TOMIESU_MODE" == wind ]]; then
-        # 校验 Wind 驱动真的并进去了
-        if ! strings "/artifacts/${TOMIESU_KMI}_${ko_suffix}" | grep -q "windc"; then
-            printf "wind mode: misc 设备名 windc 未出现在产物中\n" >&2
+        # 校验 Wind 驱动真的并进去了：看符号表而不是 .rodata 字符串，
+        # llvm-strip -d 之后字符串段布局不可依赖。
+        ko="/artifacts/${TOMIESU_KMI}_${ko_suffix}"
+        wind_syms=$(llvm-nm "$ko" 2>/dev/null | grep -ci wind || true)
+        printf "wind 校验: %s = %s bytes, wind 符号数 %s\n" "$ko" "$(stat -c%s "$ko")" "$wind_syms"
+        if ! llvm-nm "$ko" 2>/dev/null | grep -qE "wind_driver_init|wind_misc_install|g_wind_misc"; then
+            printf "wind mode: 未在符号表找到 wind 入口，实际带 wind 的符号如下\n" >&2
+            llvm-nm "$ko" 2>/dev/null | grep -i wind | head -20 >&2
             exit 1
         fi
     fi
