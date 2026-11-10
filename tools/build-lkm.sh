@@ -84,9 +84,11 @@ if [[ "$TOMIESU_MODE" != susfs ]]; then
         ko="/artifacts/${TOMIESU_KMI}_${ko_suffix}"
         wind_syms=$(llvm-nm "$ko" 2>/dev/null | grep -ci wind || true)
         printf "wind 校验: %s = %s bytes, wind 符号数 %s\n" "$ko" "$(stat -c%s "$ko")" "$wind_syms"
-        if ! llvm-nm "$ko" 2>/dev/null | grep -qE "wind_driver_init|wind_misc_install|g_wind_misc"; then
-            printf "wind mode: 未在符号表找到 wind 入口，实际带 wind 的符号如下\n" >&2
-            llvm-nm "$ko" 2>/dev/null | grep -i wind | head -20 >&2
+        # Wind 的入口与设备结构体都是 static，-O2 后名字可能被本地化或消除，
+        # 所以按"带 wind 的符号数量"判定是否并进来，避免依赖具体符号名。
+        if [[ "${wind_syms:-0}" -lt 10 ]]; then
+            printf "wind mode: wind 符号数不足，实际符号如下\n" >&2
+            llvm-nm "$ko" 2>/dev/null | grep -i wind | head -30 >&2
             exit 1
         fi
     fi
