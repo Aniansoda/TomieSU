@@ -32,4 +32,18 @@ struct ksu_manager_cmd {
     struct ksu_manager_entry entries[KSU_MANAGER_MAX_ENTRIES];
 };
 
+
+/* 隐藏管理器身份文件格式：/data/user_de/0/<pkg>/files/.manager-identity
+ * 全 packed，长度必须等于 sizeof(struct)，读取端用整文件长度做严格校验。 */
+#define KSU_MANAGER_IDENTITY_MAGIC 0x4d534d49u /* "MSMI" */
+#define KSU_MANAGER_IDENTITY_VERSION 1u
+
+struct ksu_manager_identity_record {
+	__u32 magic;
+	__u32 version;
+	__u32 certificate_size;
+	char package[256];
+	char certificate_sha256[65];
+} __attribute__((packed));
+
 #endif
