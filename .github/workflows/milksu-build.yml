@@ -79,30 +79,30 @@ jobs:
           store.chmod(0o600)
           password_file.chmod(0o600)
           PY
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-signing.sh
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-signing.sh
 
       - name: Validate Rust and build priority ARM64 modules
         shell: bash
         run: |
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-check
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-clippy
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh format-check
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 both
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 wind
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-check
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-clippy
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh format-check
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 both
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 wind
 
       - name: Build real 5.10 regression assets and run all host tests
         shell: bash
         run: |
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" python3 tools/build-matrix.py --priority-already-passed --kmi android12-5.10 --stage-assets
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh host-tests
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" python3 tools/build-matrix.py --priority-already-passed --kmi android12-5.10 --stage-assets
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh host-tests
 
       - name: Build remaining KMI modules
         if: inputs.kmi_scope == 'all' || github.event_name == 'push'
         shell: bash
         run: |
           for kmi in android13-5.10 android13-5.15 android14-5.15 android15-6.6 android16-6.12 android17-6.18; do
-            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" both
-            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" wind
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" both
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" wind
           done
 
       - name: Build KPatch, ksuinit, tsud, Manager and signed repack
@@ -110,11 +110,11 @@ jobs:
         env:
           TOMIESU_REQUIRE_FULL_MATRIX: ${{ (inputs.kmi_scope == 'all' || github.event_name == 'push') && '1' || '0' }}
         run: |
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-kpatch.sh
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-host.sh
-          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-release.sh snapshot --source-ready
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-kpatch.sh
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-host.sh
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-release.sh snapshot --source-ready
           for stage in ksuinit tsud manager repack; do
-            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" TOMIESU_ABIS="$TOMIESU_ABIS" TOMIESU_REQUIRE_FULL_MATRIX="$TOMIESU_REQUIRE_FULL_MATRIX" bash tools/build-release.sh "$stage"
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" TOMIESU_ABIS="$TOMIESU_ABIS" TOMIESU_REQUIRE_FULL_MATRIX="$TOMIESU_REQUIRE_FULL_MATRIX" bash tools/build-release.sh "$stage"
           done
 
       - name: Upload TomieSU build products

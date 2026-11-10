@@ -116,6 +116,15 @@ PY
         done
         ;;
     manager|manager-tests|manager-lint|manager-assemble)
+        # AGP 9 与 Gradle 9 要求 Java 21；runner 默认 JAVA_HOME 是 17，
+        # 会把 -P compileOptions 的 release 21 顶回去。优先用预装 JDK 21。
+        if [[ -n "${JAVA_HOME_21_X64:-}" && -x "${JAVA_HOME_21_X64}/bin/javac" ]]; then
+            export JAVA_HOME="$JAVA_HOME_21_X64"
+        elif [[ -n "${TOMIESU_JDK_HOME:-}" && -x "${TOMIESU_JDK_HOME}/bin/javac" ]]; then
+            export JAVA_HOME="$TOMIESU_JDK_HOME"
+        fi
+        export PATH="$JAVA_HOME/bin:$PATH"
+        tomiesu_log "Manager JDK: $JAVA_HOME ($("$JAVA_HOME/bin/javac" -version 2>&1))"
         export GRADLE_USER_HOME="${TOMIESU_MANAGER_GRADLE_HOME:-$TOMIESU_CACHE/gradle-build}"
         [[ -d "$work/.git" ]] || tomiesu_die "Release snapshot is missing."
         for abi in $abis; do
