@@ -149,6 +149,10 @@ PY
             "-PKSU_PACKAGE_NAME=$TOMIESU_PACKAGE_NAME" -PKSU_NAME=TomieSU
             "-PTOMIESU_ABIS=$abis"
         )
+        # aarch64 本机（qemu 跑 x86_64 aapt2 起不来 daemon）时用环境变量指定本地 aapt2。
+        if [[ -n "${TOMIESU_AAPT2_OVERRIDE:-}" && -x "${TOMIESU_AAPT2_OVERRIDE}" ]]; then
+            gradle_arguments+=("-Pandroid.aapt2FromMavenOverride=$TOMIESU_AAPT2_OVERRIDE")
+        fi
         case "$stage" in
             manager-tests) manager_tasks=(:app:testReleaseUnitTest) ;;
             manager-lint) manager_tasks=(:app:lintRelease) ;;
