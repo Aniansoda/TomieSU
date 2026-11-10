@@ -1,4 +1,3 @@
-#[cfg(target_os = "android")]
 mod android {
     use const_format::concatcp;
     use std::time::Duration;
@@ -86,5 +85,4 @@ pub const FULL_VERSION: &str = const_format::formatcp!(
     crate::ksu_uapi::KERNEL_SU_UAPI_VERSION
 );
 
-#[cfg(target_os = "android")]
 pub use android::*;
