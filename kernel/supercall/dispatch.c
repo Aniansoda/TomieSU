@@ -87,6 +87,15 @@ static int do_get_info(void __user *arg)
     return 0;
 }
 
+/* 回复里的能力位：handler 自报的 caps 加上调度器自己拥有的 FORCED 位。
+ * FORCED 是全局 pin 状态，不是 handler 属性，不能由 handler 返回。 */
+static u32 extension_reply_caps(u32 extension_id, u32 caps)
+{
+    if (ksu_extension_is_forced(extension_id))
+        caps |= KSU_EXTENSION_FLAG_FORCED;
+    return caps;
+}
+
 static int do_extension(void __user *arg)
 {
     struct ksu_extension_cmd cmd;
