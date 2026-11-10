@@ -124,7 +124,7 @@ PY
             export JAVA_HOME="$TOMIESU_JDK_HOME"
         fi
         export PATH="$JAVA_HOME/bin:$PATH"
-        tomiesu_log "Manager JDK: $JAVA_HOME ($("$JAVA_HOME/bin/javac" -version 2>&1))"
+        tomiesu_log "manager-jdk-21"
         export GRADLE_USER_HOME="${TOMIESU_MANAGER_GRADLE_HOME:-$TOMIESU_CACHE/gradle-build}"
         [[ -d "$work/.git" ]] || tomiesu_die "Release snapshot is missing."
         for abi in $abis; do
