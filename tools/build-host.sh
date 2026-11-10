@@ -38,7 +38,7 @@ for name in kpimg kptools; do
     cp "$TOMIESU_OUT/kpatch/aarch64/$name" "$assets/$name"
 done
 for kmi in android14-6.1 android12-5.10; do
-    for suffix in kernelsu susfs_guard_lkm; do
+    for suffix in tomiesu susfs_guard_lkm; do
         [[ -s "$assets/${kmi}_${suffix}.ko" ]] || tomiesu_die "Missing real asset: ${kmi}_${suffix}.ko."
     done
 done

@@ -27,7 +27,7 @@ def main() -> int:
     errors = []
     artifacts = []
     for kmi in args.kmi or KMIS:
-        for suffix in ("kernelsu", "susfs_guard_lkm"):
+        for suffix in ("tomiesu", "susfs_guard_lkm"):
             path = out / f"aarch64/{kmi}_{suffix}.ko"
             if not path.is_file():
                 errors.append(f"Missing {path.name}")
@@ -35,7 +35,7 @@ def main() -> int:
             data = path.read_bytes()
             if data[:4] != b"\x7fELF" or int.from_bytes(data[18:20], "little") != 183:
                 errors.append(f"{path.name} is not an AArch64 ELF")
-            if suffix == "kernelsu":
+            if suffix == "tomiesu":
                 if f"welcome to TomieSU version {version_code}, package name ".encode() not in data:
                     errors.append(f"{path.name} has a stale root version")
                 if signing["KSU_EXPECTED_HASH"].encode() not in data:

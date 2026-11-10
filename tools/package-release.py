@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 
-MODULE_NAME = re.compile(r"android[0-9]+-[0-9]+\.[0-9]+_(kernelsu|susfs_guard_lkm)\.ko")
+MODULE_NAME = re.compile(r"android[0-9]+-[0-9]+\.[0-9]+_(tomiesu|tomiesu-wind|susfs_guard_lkm)\.ko")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 PRIVATE_KEY = re.compile(
     rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|PuTTY-User-" rb"Key-File:", re.I)
