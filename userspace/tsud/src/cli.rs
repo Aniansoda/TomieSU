@@ -87,6 +87,10 @@ enum Commands {
         /// manager package name
         #[arg(long, default_value_t = String::from(defs::DEFAULT_PACKAGE_NAME))]
         package_name: String,
+
+        /// 加载含 Wind 驱动的 tomiesu-wind.ko（缺省为纯 root 模块）
+        #[arg(long)]
+        wind: bool,
     },
 
     /// Emulate system reboot
