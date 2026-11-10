@@ -150,6 +150,7 @@ tomiesu-objs += wind/breakpoint.o
 # clang 的 fortify 会把它误判成"越界写字段"（__write_overflow_field）。
 # 这些缓冲由调用方保证 >= 32 字节，只关该文件的告警，不改语义。
 CFLAGS_breakpoint.o += -Wno-attribute-warning
+CFLAGS_wind/breakpoint.o += -Wno-attribute-warning
 tomiesu-objs += wind/kgsl.o
 tomiesu-objs += wind/gyro.o
 tomiesu-objs += wind/nlcomm.o
