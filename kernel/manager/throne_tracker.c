@@ -28,11 +28,6 @@ static char cached_manager_apk_path[DATA_PATH_LEN];
 
 #define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
 
-struct uid_data {
-    struct list_head list;
-    u32 uid;
-    char package[KSU_MAX_PACKAGE_NAME];
-};
 
 static uid_t manager_uid(const char *package, struct list_head *uid_data)
 {

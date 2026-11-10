@@ -356,7 +356,7 @@ bool ksu_dynamic_manager_verify_apk(char *path, const char *package, uid_t uid)
     }
     read_unlock(&dynamic_manager_lock);
     if (!found ||
-        !ksu_check_apk_signature(path, entry.cert_size, entry.hash))
+        !ksu_apk_matches_certificate(path, entry.cert_size, entry.hash))
         return false;
 
     write_lock(&dynamic_manager_lock);

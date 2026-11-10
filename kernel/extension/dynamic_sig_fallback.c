@@ -34,6 +34,7 @@
 
 #include "klog.h" // IWYU pragma: keep
 #include "util.h"
+#include "manager/throne_tracker.h"
 #include "uapi/app_profile.h"
 #include "manager/apk_sign.h"
 #include "manager/manager_identity.h"
