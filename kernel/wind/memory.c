@@ -1,0 +1,1552 @@
+#include "memory.h"
+#include "compat.h"
+#include "sym.h"
+#include <linux/kconfig.h>
+#include <linux/tty.h>
+#include <linux/io.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/gfp.h>
+#include <linux/sched.h>
+#include <linux/uaccess.h>
+#include <generated/uapi/linux/version.h>
+#include <linux/sched/mm.h>
+#include <linux/highmem.h>
+#include <linux/mm_types.h>
+#include <linux/pagemap.h>
+#include <linux/mman.h>
+#include <linux/vmalloc.h>
+#include <linux/string.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/jiffies.h>
+#include <linux/spinlock.h>
+#include <linux/atomic.h>
+#include <linux/err.h>
+#include <linux/kthread.h>
+#include <linux/completion.h>
+#include <linux/workqueue.h>
+
+#include <asm/cpu.h>
+#include <asm/io.h>
+#include <asm/page.h>
+#include <asm/pgtable.h>
+#include <asm/memory.h>
+#include <asm/cacheflush.h>
+#include <asm/sysreg.h>
+
+static struct wind_phys_map wind_map_phys(phys_addr_t pa, size_t size)
+{
+	struct wind_phys_map m = { .area = NULL, .addr = NULL };
+	unsigned long addr, end;
+	int ret;
+
+	/*
+	 * ioremap_page_range -> vmap_range_noflush 对 phys_addr / size 做
+	 * BUG_ON 页对齐断言 (mm/vmalloc.c:1101), 非对齐参数直接 panic。
+	 * translate_linear_address 返回的 pa 带页内偏移, 此处强制对齐兜底。
+	 */
+	pa &= PAGE_MASK;
+	size = PAGE_ALIGN(size);
+	if (!size)
+		return m;
+
+	m.area = wind_get_vm_area_caller(size, VM_IOREMAP, VMALLOC_START, VMALLOC_END,
+					__builtin_return_address(0));
+	if (!m.area)
+		return m;
+	m.addr = m.area->addr;
+	addr = (unsigned long)m.addr;
+	end = addr + size;
+	ret = wind_ioremap_page_range(addr, end, pa, PAGE_KERNEL);
+	if (ret) {
+		wind_vunmap(m.addr, m.area);
+		m.area = NULL;
+		m.addr = NULL;
+	}
+	return m;
+}
+
+static void wind_unmap_phys(struct wind_phys_map *m)
+{
+	if (!m || !m->area)
+		return;
+
+	wind_vunmap(m->addr, m->area);
+	m->area = NULL;
+	m->addr = NULL;
+}
+
+#if defined(CONFIG_PGTABLE_LEVELS) && (CONFIG_PGTABLE_LEVELS > 0)
+#define WIND_PGTABLE_LEVELS CONFIG_PGTABLE_LEVELS
+#else
+#define WIND_PGTABLE_LEVELS 4
+#endif
+
+#define WIND_PT_BITS	(PAGE_SHIFT - 3)
+#define WIND_PT_IDXMASK	((1UL << WIND_PT_BITS) - 1)
+#define WIND_PTE_AF	((pteval_t)1 << 10)
+
+static inline unsigned long wind_lidx(unsigned long va, int lv)
+{
+	return (va >> (PAGE_SHIFT + (unsigned int)lv * WIND_PT_BITS)) & WIND_PT_IDXMASK;
+}
+
+static int wind_pgtable_levels_cached;
+
+static int wind_ttbr1_vabits(void)
+{
+	u64 tcr = read_sysreg(tcr_el1);
+	u32 t1sz = (u32)((tcr >> 16) & 0x3fUL);
+	int vabits = 64 - (int)t1sz;
+
+	if (vabits < 32 || vabits > 52)
+		return 0;
+	return vabits;
+}
+
+/* 厂商内核的 struct mm_struct 布局与 GKI 不同时, mm->pgd 会取到错字段,
+ * 拿一个垃圾指针去翻页表 -> 直接 panic。这两个参数允许装机时用设备 BTF
+ * 量出来的偏移覆盖编译期 offsetof, 不用重新编译。
+ *   insmod wind.ko mm_pgd_off=1234 mm_task_size_off=5678
+ * -1 = 用编译期 offsetof(默认)。 */
+static int mm_pgd_off = -1;
+module_param(mm_pgd_off, int, 0644);
+MODULE_PARM_DESC(mm_pgd_off, "-1=编译期 offsetof(struct mm_struct,pgd); 否则按此字节偏移取");
+
+static int mm_task_size_off = -1;
+module_param(mm_task_size_off, int, 0644);
+MODULE_PARM_DESC(mm_task_size_off, "-1=编译期 offsetof(mm_struct,task_size); 否则按此字节偏移取");
+
+static atomic_t g_pgd_bad = ATOMIC_INIT(0);
+
+/* arm64 内核线性地址高 16 位全 1。pgd 必须是这种指针, 否则就是偏移取错了。
+ * 提前拦下来, 只让这次读返回失败, 不去解引用 -> 不会 panic 重启。 */
+static inline bool wind_kaddr_ok(const void *p)
+{
+	return ((unsigned long)p >> 48) == 0xffffUL;
+}
+
+static inline pgd_t *wind_mm_pgd(struct mm_struct *mm)
+{
+	pgd_t *pgd;
+
+	if (!mm)
+		return NULL;
+	if (mm_pgd_off >= 0 && mm_pgd_off <= 4096)
+		pgd = *(pgd_t **)((char *)mm + mm_pgd_off);
+	else
+		pgd = mm->pgd;
+
+	if (!wind_kaddr_ok(pgd)) {
+		/* 只报前 3 次, 免得刷屏 */
+		if (atomic_inc_return(&g_pgd_bad) <= 3)
+			pr_err("wind: mm->pgd 取到非内核地址 %px (mm=%px, off=%d) —— "
+			       "struct mm_struct 布局不符, 用 mm_pgd_off= 指定真实偏移\n",
+			       pgd, mm, mm_pgd_off);
+		return NULL;
+	}
+	return pgd;
+}
+
+static inline unsigned long wind_mm_task_size(struct mm_struct *mm)
+{
+	if (!mm)
+		return 0;
+	if (mm_task_size_off >= 0 && mm_task_size_off <= 4096)
+		return *(unsigned long *)((char *)mm + mm_task_size_off);
+	return mm->task_size;
+}
+
+/* 读路径分级打点: 前 N 次读每一步打一行, pstore 里最后一行就是死点。 */
+static int trace_read;
+module_param(trace_read, int, 0644);
+MODULE_PARM_DESC(trace_read, ">0 时前 N 次读打印 va/pa/结果, 定位读路径 panic 用");
+static atomic_t g_trace_seq = ATOMIC_INIT(0);
+
+static inline bool wind_tracing(void)
+{
+	return trace_read > 0 && atomic_read(&g_trace_seq) <= trace_read;
+}
+
+static int wind_pgtable_levels(void)
+{
+	int lv = READ_ONCE(wind_pgtable_levels_cached);
+	int vabits, n;
+
+	if (lv)
+		return lv;
+
+	vabits = wind_ttbr1_vabits();
+	if (!vabits && current && current->mm) {
+		unsigned long ts = wind_mm_task_size(current->mm);
+
+		if (ts >= (1UL << 32))
+			vabits = 63 - __builtin_clzll((unsigned long long)ts);
+	}
+	if (vabits < 25)
+		vabits = 39; /* 兜底: 按 3 级处理 */
+
+	n = (vabits - PAGE_SHIFT + WIND_PT_BITS - 1) / WIND_PT_BITS;
+	if (n < 3 || n > 5)
+		n = 3;
+
+	WRITE_ONCE(wind_pgtable_levels_cached, n);
+	pr_info("wind: vabits=%d pgtables=%d level(s)\n", vabits, n);
+	return n;
+}
+
+/* ===================== VA -> PA 翻译缓存 =====================
+ * 每次读的瓶颈不是数据页, 是页表遍历: wind_mm_pte_locate_at 要按级
+ * (pgd->pud->pmd->pte, 3~4 级) 每级 wind_map_phys/vunmap 一次, 单次读
+ * 光翻译就是 3~4 次 vmap, 100us 量级。同一批数据在循环里被反复读,
+ * 缓存 VA 页 -> PA 页就够: 稳态下翻译变成一次哈希查表。
+ *
+ * 失效: TTL + bind/destroy/unload 全清。页表变了(COW/mmap)最坏读到旧物理页,
+ * 得到旧数据而不是崩溃 —— 与数据页映射缓存同一取舍。
+ */
+#define WIND_TR_SLOTS 4096
+struct wind_tr_slot {
+	unsigned long va_page;
+	phys_addr_t pa_page;
+	unsigned long stamp;
+};
+
+static struct wind_tr_slot g_tr_slots[WIND_TR_SLOTS];
+static DEFINE_SPINLOCK(g_tr_lock);
+static atomic64_t g_stat_tr_hits = ATOMIC64_INIT(0);
+static atomic64_t g_stat_tr_misses = ATOMIC64_INIT(0);
+
+static int tr_cache = 1;
+module_param(tr_cache, int, 0644);
+MODULE_PARM_DESC(tr_cache, "1=缓存 VA->PA 翻译(默认) 0=每次重新遍历页表");
+
+static int tr_ttl_ms = 2000;
+module_param(tr_ttl_ms, int, 0644);
+MODULE_PARM_DESC(tr_ttl_ms, "翻译缓存存活毫秒数, 默认 2000");
+
+void wind_tr_cache_purge(void)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&g_tr_lock, flags);
+	memset(g_tr_slots, 0, sizeof(g_tr_slots));
+	spin_unlock_irqrestore(&g_tr_lock, flags);
+}
+
+static bool wind_tr_lookup(unsigned long va_page, phys_addr_t *pa_page)
+{
+	struct wind_tr_slot *s;
+	bool hit = false;
+
+	if (!tr_cache)
+		return false;
+
+	s = &g_tr_slots[(va_page >> PAGE_SHIFT) & (WIND_TR_SLOTS - 1)];
+	spin_lock(&g_tr_lock);
+	if (s->va_page == va_page && s->pa_page &&
+	    time_before(jiffies, s->stamp + msecs_to_jiffies(tr_ttl_ms))) {
+		*pa_page = s->pa_page;
+		hit = true;
+	}
+	spin_unlock(&g_tr_lock);
+
+	if (hit)
+		atomic64_inc(&g_stat_tr_hits);
+	else
+		atomic64_inc(&g_stat_tr_misses);
+	return hit;
+}
+
+static void wind_tr_store(unsigned long va_page, phys_addr_t pa_page)
+{
+	struct wind_tr_slot *s;
+
+	if (!tr_cache || !pa_page)
+		return;
+	s = &g_tr_slots[(va_page >> PAGE_SHIFT) & (WIND_TR_SLOTS - 1)];
+	spin_lock(&g_tr_lock);
+	s->va_page = va_page;
+	s->pa_page = pa_page & PAGE_MASK;
+	s->stamp = jiffies;
+	spin_unlock(&g_tr_lock);
+}
+
+static pte_t *wind_mm_pte_locate_at(struct mm_struct *mm, unsigned long va,
+				    int levels, struct wind_phys_map *out_m)
+{
+	pgd_t *pgd;
+	phys_addr_t pa;
+	struct wind_phys_map m;
+	pteval_t val, type;
+	int lv;
+
+	if (!mm || levels < 3 || levels > 5)
+		return NULL;
+
+	va &= PAGE_MASK;
+
+	pgd = wind_mm_pgd(mm);
+	if (!pgd)
+		return NULL;
+	pgd += wind_lidx(va, levels - 1);
+	if (wind_tracing())
+		pr_info("wind: pgd=%px va=%lx levels=%d\n", pgd, va, levels);
+	val = pgd_val(*pgd);
+	if (!val || (val & 0x3) != 0x3)
+		return NULL;
+
+	pa = (phys_addr_t)(val & PHYS_MASK & (s32)PAGE_MASK);
+	if (!pa || !IS_ALIGNED(pa, PAGE_SIZE))
+		return NULL;
+
+	for (lv = levels - 2; lv >= 0; lv--) {
+		pteval_t *entry;
+
+		m = wind_map_phys(pa, PAGE_SIZE);
+		if (!m.addr)
+			return NULL;
+
+		entry = (pteval_t *)m.addr + wind_lidx(va, lv);
+		val = READ_ONCE(*entry);
+		if (!val) {
+			wind_unmap_phys(&m);
+			return NULL;
+		}
+		type = val & 0x3;
+
+		if (lv == 0) {
+			/* pte 级: 0b11 = 有效页 */
+			if (type != 0x3) {
+				wind_unmap_phys(&m);
+				return NULL;
+			}
+			if (out_m)
+				*out_m = m;
+			else
+				wind_unmap_phys(&m);
+			return (pte_t *)entry;
+		}
+
+		if (type != 0x3) {
+			wind_unmap_phys(&m);
+			return NULL;
+		}
+
+		pa = (phys_addr_t)(val & PHYS_MASK & (s32)PAGE_MASK);
+		wind_unmap_phys(&m);
+		if (!pa || !IS_ALIGNED(pa, PAGE_SIZE))
+			return NULL;
+	}
+
+	return NULL;
+}
+
+static pte_t *wind_mm_pte_locate(struct mm_struct *mm, unsigned long va,
+				 struct wind_phys_map *out_m)
+{
+	return wind_mm_pte_locate_at(mm, va, wind_pgtable_levels(), out_m);
+}
+
+phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
+{
+	struct wind_phys_map m = { .area = NULL, .addr = NULL };
+	unsigned long va_page = va & PAGE_MASK;
+	pte_t *pte;
+	phys_addr_t pa;
+
+	if (!mm)
+		return 0;
+
+	/* 命中: 直接算物理地址, 不碰页表 */
+	if (wind_tr_lookup(va_page, &pa))
+		return pa + (va & (PAGE_SIZE - 1));
+
+	pte = wind_mm_pte_locate(mm, va, &m);
+	if (!pte)
+		return 0;
+
+	if (pte_none(wind_ptep_get(pte)) || !pte_present(wind_ptep_get(pte))) {
+		wind_unmap_phys(&m);
+		return 0;
+	}
+
+	pa = (phys_addr_t)(pte_pfn(wind_ptep_get(pte)) << PAGE_SHIFT) +
+	     (va & (PAGE_SIZE - 1));
+	wind_unmap_phys(&m);
+	wind_tr_store(va_page, pa & PAGE_MASK);
+	return pa;
+}
+
+static inline void wind_flush_tlb_va(unsigned long va)
+{
+	asm volatile("dsb ishst\n"
+		     "\ttlbi vaae1is, %0\n"
+		     "\tdsb ish\n"
+		     "\tisb\n"
+		     : : "r" (va) : "memory");
+}
+
+static bool allow_block_patch;
+module_param(allow_block_patch, bool, 0644);
+MODULE_PARM_DESC(allow_block_patch, "force allow AP[2] patch on executable block leaf");
+
+static int wind_kpage_validate(unsigned long va, int levels, bool *leaf_block,
+			       pteval_t *leaf_val)
+{
+	struct wind_phys_map m;
+	phys_addr_t pa;
+	pteval_t val, type;
+	int lv;
+
+	if (levels < 3 || levels > 5)
+		return -EINVAL;
+	if (!(va >> 63)) {
+		pr_err("wind: force_rw va=%lx 不在内核高半区\n", va);
+		return -EINVAL;
+	}
+
+	pa = (phys_addr_t)(read_sysreg(ttbr1_el1) & PHYS_MASK & (s32)PAGE_MASK);
+	if (!pa) {
+		pr_err("wind: ttbr1 root pa = 0\n");
+		return -EINVAL;
+	}
+	for (lv = levels - 1; lv >= 0; lv--) {
+		pteval_t *entry;
+
+		m = wind_map_phys(pa, PAGE_SIZE);
+		if (!m.addr) {
+			pr_err("wind: force_rw lv%d map %pa failed\n", lv, &pa);
+			return -EINVAL;
+		}
+
+		entry = (pteval_t *)m.addr + wind_lidx(va, lv);
+		val = READ_ONCE(*entry);
+		wind_unmap_phys(&m);
+
+		type = val & 0x3;
+
+		if (!val) {
+			pr_err("wind: force_rw lv%d none va=%lx idx=%lu (levels=%d)\n",
+			       lv, va, wind_lidx(va, lv), levels);
+			return -EINVAL;
+		}
+
+		if (lv == 0) {
+			if (type != 0x3) {
+				pr_err("wind: force_rw pte bad va=%lx val=%llx\n",
+				       va, (unsigned long long)val);
+				return -EINVAL;
+			}
+			if (!(val & WIND_PTE_AF)) {
+				pr_err("wind: force_rw pte AF=0 va=%lx val=%llx\n",
+				       va, (unsigned long long)val);
+				return -EINVAL;
+			}
+			*leaf_block = false;
+			*leaf_val = val;
+			return 0;
+		}
+
+		if (type == 0x1) {
+			if (!(val & WIND_PTE_AF)) {
+				pr_err("wind: force_rw lv%d block AF=0 va=%lx val=%llx\n",
+				       lv, va, (unsigned long long)val);
+				return -EINVAL;
+			}
+			*leaf_block = true;
+			*leaf_val = val;
+			return 0;
+		}
+
+		if (type != 0x3) {
+			pr_err("wind: force_rw lv%d bad va=%lx val=%llx\n",
+			       lv, va, (unsigned long long)val);
+			return -EINVAL;
+		}
+
+		pa = (phys_addr_t)(val & PHYS_MASK & (s32)PAGE_MASK);
+		if (!IS_ALIGNED(pa, PAGE_SIZE) || !pa) {
+			pr_err("wind: force_rw lv%d table pa bad %llx\n",
+			       lv, (unsigned long long)pa);
+			return -EINVAL;
+		}
+	}
+
+	return -EINVAL;
+}
+
+static int wind_kpage_patch(unsigned long va, bool writable, int levels)
+{
+	const pteval_t AP_RO = (pteval_t)1 << 7;
+	struct wind_phys_map m;
+	phys_addr_t pa;
+	pteval_t val;
+	int lv;
+
+	pa = (phys_addr_t)(read_sysreg(ttbr1_el1) & PHYS_MASK & (s32)PAGE_MASK);
+
+	for (lv = levels - 1; lv >= 0; lv--) {
+		pteval_t *entry;
+		pteval_t type;
+
+		m = wind_map_phys(pa, PAGE_SIZE);
+		if (!m.addr)
+			return -EINVAL;
+
+		entry = (pteval_t *)m.addr + wind_lidx(va, lv);
+		val = READ_ONCE(*entry);
+		type = val & 0x3;
+
+		if (lv == 0 || type == 0x1) {
+			pteval_t new = writable ? (val & ~AP_RO) : (val | AP_RO);
+
+			WRITE_ONCE(*entry, new);
+			wind_unmap_phys(&m);
+			wind_flush_tlb_va(va);
+			return 0;
+		}
+
+		if (type != 0x3) {
+			wind_unmap_phys(&m);
+			return -EINVAL;
+		}
+
+		pa = (phys_addr_t)(val & PHYS_MASK & (s32)PAGE_MASK);
+		wind_unmap_phys(&m);
+	}
+
+	return -EINVAL;
+}
+
+int wind_force_kernel_page_rw(unsigned long va, bool writable)
+{
+	const pteval_t PXN = (pteval_t)1 << 53;
+	const pteval_t UXN = (pteval_t)1 << 54;
+	bool leaf_block = false;
+	pteval_t leaf_val = 0;
+	int ret, levels;
+
+	va &= PAGE_MASK;
+
+	levels = wind_pgtable_levels();
+
+	ret = wind_kpage_validate(va, levels, &leaf_block, &leaf_val);
+	if (ret)
+		return ret;
+
+	if (leaf_block) {
+		bool nx = (leaf_val & PXN) && (leaf_val & UXN);
+
+		if (!nx && !allow_block_patch) {
+			pr_err("wind: block 叶子是可执行段, 拒绝改写 (val=%llx)\n",
+			       (unsigned long long)leaf_val);
+			return -EINVAL;
+		}
+		if (!allow_block_patch)
+			pr_info("wind: block 叶子 NX 数据段, 整块 2MB 临时开放 (val=%llx)\n",
+				(unsigned long long)leaf_val);
+	}
+
+	ret = wind_kpage_patch(va, writable, levels);
+	if (ret == 0) {
+		static bool wind_lv_ok;
+
+		if (!wind_lv_ok) {
+			wind_lv_ok = true;
+			pr_info("wind: kernel pgtables = %d level(s), leaf %s\n",
+				levels, leaf_block ? "block" : "page");
+		}
+	}
+	return ret;
+}
+
+int wind_kernel_page_ro_state(unsigned long va, bool *is_ro)
+{
+	const pteval_t AP_RO = (pteval_t)1 << 7;
+	struct wind_phys_map m;
+	phys_addr_t pa;
+	pteval_t val, leaf_val = 0;
+	bool leaf_block = false;
+	int lv, levels, ret;
+
+	if (!is_ro)
+		return -EINVAL;
+
+	va &= PAGE_MASK;
+	levels = wind_pgtable_levels();
+
+	ret = wind_kpage_validate(va, levels, &leaf_block, &leaf_val);
+	if (ret)
+		return ret;
+
+	pa = (phys_addr_t)(read_sysreg(ttbr1_el1) & PHYS_MASK & (s32)PAGE_MASK);
+	for (lv = levels - 1; lv >= 0; lv--) {
+		pteval_t *entry;
+		pteval_t type;
+
+		m = wind_map_phys(pa, PAGE_SIZE);
+		if (!m.addr)
+			return -EINVAL;
+		entry = (pteval_t *)m.addr + wind_lidx(va, lv);
+		val = READ_ONCE(*entry);
+		wind_unmap_phys(&m);
+
+		type = val & 0x3;
+		if (lv == 0 || type == 0x1) {
+			*is_ro = !!(val & AP_RO);
+			return 0;
+		}
+		pa = (phys_addr_t)(val & PHYS_MASK & (s32)PAGE_MASK);
+	}
+	return -EINVAL;
+}
+
+pteval_t wind_shadow_pte_get(struct mm_struct *mm, unsigned long va, int *err)
+{
+	struct wind_phys_map m = { .area = NULL, .addr = NULL };
+	pte_t *pte;
+	pteval_t val = 0;
+
+	if (err)
+		*err = -EINVAL;
+	if (!mm)
+		return 0;
+
+	pte = wind_mm_pte_locate(mm, va, &m);
+	if (!pte)
+		return 0;
+
+	val = pte_val(wind_ptep_get(pte));
+	wind_unmap_phys(&m);
+	if (err)
+		*err = 0;
+	return val;
+}
+
+int wind_shadow_pte_set(struct mm_struct *mm, unsigned long va, pteval_t mask, pteval_t val)
+{
+	struct wind_phys_map m = { .area = NULL, .addr = NULL };
+	pte_t *pte;
+	pteval_t old, new;
+
+	if (!mm)
+		return -EINVAL;
+
+	pte = wind_mm_pte_locate(mm, va, &m);
+	if (!pte)
+		return -EINVAL;
+
+	old = pte_val(wind_ptep_get(pte));
+	new = (old & ~mask) | (val & mask);
+
+	WRITE_ONCE(*(pteval_t *)pte, new);
+	asm volatile("dsb ishst\n"
+		     "\ttlbi vaae1is, %0\n"
+		     "\ttlbi vale1is, %0\n"
+		     "\tdsb ish\n"
+		     "\tisb\n"
+		     : : "r" (va & PAGE_MASK) : "memory");
+
+	wind_unmap_phys(&m);
+	return 0;
+}
+
+/* ---- 代码页改写 / 远端可执行页映射 ---- */
+
+/* I/D cache 一致: 逐 64B 行 clean+invalidate, 用内核 VA (线性映射) */
+static void wind_flush_code_range(void *kaddr, size_t len)
+{
+	unsigned long a = (unsigned long)kaddr & ~63UL;
+	unsigned long end = ((unsigned long)kaddr + len + 63UL) & ~63UL;
+	unsigned long p;
+
+	for (p = a; p < end; p += 64)
+		asm volatile("dc cvau, %0" : : "r"(p) : "memory");
+	asm volatile("dsb ish" : : : "memory");
+	for (p = a; p < end; p += 64)
+		asm volatile("ic ivau, %0" : : "r"(p) : "memory");
+	asm volatile("dsb ish\n\tisb" : : : "memory");
+}
+
+/* 改写目标进程代码页字节。
+ * 代码页是 file-backed 只读映射, 直接写物理页会污染 page cache (所有加载
+ * 同一 .so 的进程一起变), 所以先走 GUP(FOLL_WRITE) 让内核按 MAP_PRIVATE
+ * 语义做出私有副本, 再在内核里改这份副本并刷 I/D cache。
+ * 只能在进程上下文 (ioctl / 工作队列) 调用。 */
+int wind_patch_process_code(struct mm_struct *mm, unsigned long va,
+			    const void *buf, size_t len)
+{
+	struct page *page = NULL;
+	unsigned long off = va & (PAGE_SIZE - 1);
+	void *k;
+	long got;
+
+	if (!mm || !buf || !len || off + len > PAGE_SIZE)
+		return -EINVAL;
+
+	got = kh_get_user_pages_remote(mm, va & PAGE_MASK, 1, FOLL_WRITE, &page);
+	if (got != 1 || !page)
+		return got < 0 ? (int)got : -EFAULT;
+
+	k = kmap_local_page(page);
+	memcpy((u8 *)k + off, buf, len);
+	wind_flush_code_range((u8 *)k + off, len);
+	kunmap_local(k);
+
+	set_page_dirty_lock(page);
+	put_page(page);
+	return 0;
+}
+
+struct wind_remote_map_req {
+	struct work_struct work;
+	struct completion done;
+	struct mm_struct *mm;
+	unsigned long hint;
+	unsigned long len;
+	unsigned long addr;   /* unmap 时是入参, map 时是出参 */
+	int unmap;
+	int ret;
+};
+
+/* 在目标 mm 里 mmap/munmap 需要目标 mm 成为 current->mm, 只有内核线程能
+ * 这么干, 所以丢给工作队列 (worker 是 kthread), 调用方等完成。 */
+static void wind_remote_map_work(struct work_struct *work)
+{
+	struct wind_remote_map_req *r = container_of(work, struct wind_remote_map_req, work);
+
+	if (!r->mm) {
+		r->ret = -EINVAL;
+		complete(&r->done);
+		return;
+	}
+
+	if (wind_kthread_use_mm(r->mm) != 0) {
+		r->ret = -EOPNOTSUPP;
+		complete(&r->done);
+		return;
+	}
+	if (r->unmap) {
+		r->ret = vm_munmap(r->addr, r->len);
+	} else {
+		unsigned long a = vm_mmap(NULL, r->hint, r->len,
+					  PROT_READ | PROT_WRITE | PROT_EXEC,
+					  MAP_PRIVATE | MAP_ANONYMOUS |
+					  MAP_FIXED_NOREPLACE, 0);
+		if (IS_ERR_VALUE(a)) {
+			r->addr = 0;
+			r->ret = (int)a;
+		} else {
+			r->addr = a;
+			r->ret = 0;
+		}
+	}
+	wind_kthread_unuse_mm(r->mm);
+	complete(&r->done);
+}
+
+/* 调用方负责持住 mm 引用 (mmget_not_zero), 这里不再动引用计数 */
+static int wind_remote_map(struct mm_struct *mm, unsigned long hint,
+			   unsigned long len, int unmap, unsigned long *addr)
+{
+	struct wind_remote_map_req r;
+
+	memset(&r, 0, sizeof(r));
+	INIT_WORK(&r.work, wind_remote_map_work);
+	init_completion(&r.done);
+	r.mm = mm;
+	r.hint = hint & PAGE_MASK;
+	r.len = PAGE_ALIGN(len);
+	r.unmap = unmap;
+	r.addr = addr ? (*addr & PAGE_MASK) : 0;
+
+	schedule_work(&r.work);
+	wait_for_completion(&r.done);
+
+	if (r.ret)
+		return r.ret;
+	if (addr && !unmap)
+		*addr = r.addr;
+	return 0;
+}
+
+/* 在目标 mm 里拿一页 RWX 当跳板, 地址尽量贴着 hint (b imm26 只能 ±128MB) */
+unsigned long wind_map_exec_page_in(struct mm_struct *mm, unsigned long hint)
+{
+	unsigned long cand, got = 0;
+	int i;
+
+	if (!mm || !mmget_not_zero(mm))
+		return 0;
+
+	/* 先试 hint 附近 2MB 对齐的落点, 都被占了再让内核随便选 */
+	for (i = 0; i < 8; i++) {
+		cand = (hint & ~((1UL << 21) - 1)) + ((unsigned long)(i + 1) << 21);
+		if (wind_remote_map(mm, cand, PAGE_SIZE, 0, &got) == 0 && got)
+			goto out;
+	}
+	if (wind_remote_map(mm, 0, PAGE_SIZE, 0, &got) != 0)
+		got = 0;
+	if (got) {
+		/* 落点必须能被 b imm26 够到 (±128MB) */
+		unsigned long d = got > hint ? got - hint : hint - got;
+		if (d >= (1UL << 27)) {
+			unsigned long tmp = got;
+			wind_remote_map(mm, tmp, PAGE_SIZE, 1, &tmp);
+			got = 0;
+		}
+	}
+out:
+	wind_mmput(mm);
+	return got;
+}
+
+int wind_unmap_in(struct mm_struct *mm, unsigned long addr, unsigned long len)
+{
+	int ret;
+
+	if (!mm || !addr)
+		return -EINVAL;
+	if (!mmget_not_zero(mm))
+		return -ESRCH;
+	ret = wind_remote_map(mm, addr, len, 1, &addr);
+	wind_mmput(mm);
+	return ret;
+}
+
+/* ---- 页表项钉住 (原子上下文安全) ---- */
+int wind_pte_pin(struct mm_struct *mm, unsigned long va, struct wind_pte_pin *pin)
+{
+	pte_t *pte;
+
+	if (!mm || !pin)
+		return -EINVAL;
+
+	memset(pin, 0, sizeof(*pin));
+	pte = wind_mm_pte_locate(mm, va, &pin->map);
+	if (!pte)
+		return -EFAULT;
+
+	pin->pte = (pteval_t *)pte;
+	pin->valid = true;
+	return 0;
+}
+
+void wind_pte_unpin(struct wind_pte_pin *pin)
+{
+	if (!pin || !pin->valid)
+		return;
+
+	wind_unmap_phys(&pin->map);
+	pin->pte = NULL;
+	pin->valid = false;
+}
+
+pteval_t wind_pte_pin_get(struct wind_pte_pin *pin)
+{
+	if (!pin || !pin->valid)
+		return 0;
+	return READ_ONCE(*pin->pte);
+}
+
+void wind_pte_pin_write(struct wind_pte_pin *pin, unsigned long va,
+			pteval_t mask, pteval_t val)
+{
+	pteval_t old, new;
+
+	if (!pin || !pin->valid)
+		return;
+
+	old = READ_ONCE(*pin->pte);
+	new = (old & ~mask) | (val & mask);
+	WRITE_ONCE(*pin->pte, new);
+
+	asm volatile("dsb ishst\n"
+		     "\ttlbi vaae1is, %0\n"
+		     "\ttlbi vale1is, %0\n"
+		     "\tdsb ish\n"
+		     "\tisb\n"
+		     : : "r" (va & PAGE_MASK) : "memory");
+}
+
+/* 供 breakpoint.c 在影子页 / 跳板页里改完字节后刷 I/D cache */
+void wind_flush_code(void *kaddr, size_t len)
+{
+	wind_flush_code_range(kaddr, len);
+}
+
+/* ---- 影子页: 把一份私有副本映射到目标 VA, 原页与文件都不动 ----
+ *
+ * 思路就是 HookPTE 那套: 不去改 .so 的代码页 (page cache 里那份), 而是
+ *   原页 pin 住  ->  alloc_page 复制一份  ->  改副本  ->  把目标 VA 的 PTE
+ *   输出地址换成副本  ->  卸载时把 PTE 换回原页
+ * 目标进程取指、CRC 比对文件时看到的都还是原始内容, 补丁只在私有副本里。
+ */
+int wind_shadow_attach(struct mm_struct *mm, unsigned long va, struct wind_shadow *sh)
+{
+	struct page *sp;
+	pteval_t old, new;
+	void *src;
+	long got;
+
+	if (!mm || !sh)
+		return -EINVAL;
+	memset(sh, 0, sizeof(*sh));
+
+	if (wind_pte_pin(mm, va, &sh->pin) != 0)
+		return -EFAULT;
+
+	old = wind_pte_pin_get(&sh->pin);
+
+	/* 连续 PTE (CONTPTE): 单改 4K 项会破坏整块的 contiguous 语义, 拆块
+	 * 要相邻 16 项一起失效, 这里不做 —— 如实拒绝, 上层退回 COW 写路径 */
+	if (old & PTE_CONT) {
+		wind_pte_unpin(&sh->pin);
+		return -EOPNOTSUPP;
+	}
+
+	got = kh_get_user_pages_remote(mm, va & PAGE_MASK, 1, 0, &sh->orig);
+	if (got != 1 || !sh->orig) {
+		wind_pte_unpin(&sh->pin);
+		return got < 0 ? (int)got : -EFAULT;
+	}
+
+	sp = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (!sp) {
+		put_page(sh->orig);
+		wind_pte_unpin(&sh->pin);
+		return -ENOMEM;
+	}
+
+	src = kmap_local_page(sh->orig);
+	memcpy(page_address(sp), src, PAGE_SIZE);
+	kunmap_local(src);
+	flush_dcache_page(sp);
+
+	/* 只换输出地址: UXN/AP/AF 等属性位全部沿用原 PTE, 执行权限不变 */
+	new = (old & ~KH_PTE_PA_MASK) | KH_PHYS_TO_PTE(page_to_phys(sp));
+	new |= PTE_AF;
+	wind_pte_pin_write(&sh->pin, va, ~(pteval_t)0, new);
+
+	sh->page = sp;
+	sh->saved = old;
+	sh->kva = page_address(sp);
+	sh->remapped = true;
+	/* UXN=0 才是 EL0 可执行页: 跳板要跳到这页里, 数据页跳进去直接
+	 * instruction abort, 所以候选页必须过这一关 */
+	sh->exec_ok = !(old & PTE_UXN);
+	return 0;
+}
+
+int wind_shadow_detach(struct mm_struct *mm, unsigned long va, struct wind_shadow *sh)
+{
+	if (!sh || !sh->remapped)
+		return -EINVAL;
+
+	/* 先把 PTE 换回原页 (整页内容随之回到原始状态), 再释放副本 */
+	wind_pte_pin_write(&sh->pin, va, ~(pteval_t)0, sh->saved);
+	wind_pte_unpin(&sh->pin);
+
+	if (sh->orig)
+		put_page(sh->orig);
+	if (sh->page)
+		__free_pages(sh->page, 0);
+
+	memset(sh, 0, sizeof(*sh));
+	return 0;
+}
+
+/* 断点/陀螺仪/kprobe 回调里调用本函数时, 上下文是「关中断 + 可能持有
+ * 页表锁」, 此时 wind_map_phys 的 get_vm_area/vmap 会睡眠:
+ *   BUG: sleeping function called from invalid context
+ * 或者在 vmap_lock 上死等, 整机卡死。arm64 GKI 拿不到 memstart_addr,
+ * phys_to_virt 也不可用, 唯一原子安全的路子是 nofault uaccess —— 回调
+ * 一定跑在目标进程上下文, 所以直接对目标 VA 做 copy_{from,to}_user_nofault。 */
+static bool wind_va_nofault_xfer(uintptr_t va, void *buf, size_t size, bool write)
+{
+	/* 走 sym.c 里 kallsyms 解析出来的 copy_*_user_nofault: 内部自带
+	 * pagefault_disable, 缺页返回 -EFAULT 而不是睡眠; 解析不到就明确失败 */
+	if (write)
+		return wind_copy_to_user_nofault((void __user *)va, buf, size) == 0;
+	return wind_copy_from_user_nofault(buf, (const void __user *)va, size) == 0;
+}
+
+static bool wind_process_va_xfer(struct mm_struct *mm, uintptr_t va,
+				 void *buf, size_t size, bool write)
+{
+	uintptr_t cur = va;
+	char *b = buf;
+	size_t left = size;
+
+	if (!mm || !buf)
+		return false;
+
+	/* 回调上下文: 不能 vmap, 只能 nofault 直取 (mm 必须是 current->mm,
+	 * 回调天然满足; 不满足就明确失败, 绝不在原子上下文里睡) */
+	if (in_atomic() || irqs_disabled()) {
+		if (mm != current->mm)
+			return false;
+		return wind_va_nofault_xfer(cur, b, left, write);
+	}
+
+	while (left)
+	{
+		phys_addr_t pa;
+		size_t off, chunk;
+		struct wind_phys_map m;
+
+		pa = translate_linear_address(mm, cur);
+		if (!pa)
+			return false;
+
+		pa &= PAGE_MASK;
+		off = cur & (PAGE_SIZE - 1);
+		chunk = PAGE_SIZE - off;
+		if (chunk > left)
+			chunk = left;
+
+		m = wind_map_phys(pa, PAGE_SIZE);
+		if (!m.addr)
+			return false;
+
+		if (write)
+			memcpy((char *)m.addr + off, b, chunk);
+		else
+			memcpy(b, (char *)m.addr + off, chunk);
+
+		wind_unmap_phys(&m);
+		b += chunk;
+		cur += chunk;
+		left -= chunk;
+	}
+	return true;
+}
+
+bool wind_read_process_va(struct mm_struct *mm, uintptr_t va, void *buf, size_t size)
+{
+	if (!mm || !buf)
+		return false;
+	return wind_process_va_xfer(mm, va, buf, size, false);
+}
+
+bool wind_write_process_va(struct mm_struct *mm, uintptr_t va, const void *buf, size_t size)
+{
+	if (!mm || !buf)
+		return false;
+	return wind_process_va_xfer(mm, va, (void *)buf, size, true);
+}
+
+#define WIND_MAP_SLOTS 1024
+#define WIND_MAP_TTL   (3 * HZ)
+
+struct wind_map_slot {
+	phys_addr_t pa;
+	struct vm_struct *area;
+	void *addr;
+	unsigned long stamp;
+};
+
+/* map_cache=0 → 完全退回旧的「每次读都 vmap/vunmap」路径。
+ * 刷入就重启时用 insmod wind.ko map_cache=0 一条命令就能判定是不是这段引起的,
+ * 不需要重新编译。 */
+static bool map_cache = true;
+module_param(map_cache, bool, 0644);
+MODULE_PARM_DESC(map_cache, "1=复用单页映射(默认, 快) 0=每次读重新映射(旧行为, 慢)");
+
+static struct wind_map_slot g_map_slots[WIND_MAP_SLOTS];
+static DEFINE_MUTEX(g_map_mutex);
+static atomic64_t g_stat_reads = ATOMIC64_INIT(0);
+static atomic64_t g_stat_hits = ATOMIC64_INIT(0);
+static atomic64_t g_stat_misses = ATOMIC64_INIT(0);
+static atomic64_t g_stat_evicts = ATOMIC64_INIT(0);
+
+static void wind_slot_free(struct wind_map_slot *s)
+{
+	if (s->area)
+		wind_vunmap(s->addr, s->area);
+	memset(s, 0, sizeof(*s));
+}
+
+void wind_map_cache_purge(void)
+{
+	int i;
+
+	wind_tr_cache_purge();
+
+	mutex_lock(&g_map_mutex);
+	for (i = 0; i < WIND_MAP_SLOTS; i++)
+		wind_slot_free(&g_map_slots[i]);
+	mutex_unlock(&g_map_mutex);
+}
+
+void wind_map_cache_get_stats(struct wind_map_stats *out)
+{
+	int i, used = 0;
+
+	if (!out)
+		return;
+	mutex_lock(&g_map_mutex);
+	for (i = 0; i < WIND_MAP_SLOTS; i++)
+		if (g_map_slots[i].area)
+			used++;
+	mutex_unlock(&g_map_mutex);
+
+	out->reads = (uint64_t)atomic64_read(&g_stat_reads);
+	out->hits = (uint64_t)atomic64_read(&g_stat_hits);
+	out->misses = (uint64_t)atomic64_read(&g_stat_misses);
+	out->evicts = (uint64_t)atomic64_read(&g_stat_evicts);
+	out->cached = (uint64_t)used;
+#ifdef WIND_HAVE_TR_STATS
+	out->tr_hits = (uint64_t)atomic64_read(&g_stat_tr_hits);
+	out->tr_misses = (uint64_t)atomic64_read(&g_stat_tr_misses);
+#endif
+}
+
+/* 直接映射哈希: 槽位下标由物理页号算出, 命中就是一次数组访问 + 一次比较。
+ * 旧实现每次读都要扫 256 个槽位(每个还要 time_after), 单这一项就 1~2us,
+ * 300 次读/帧就是几百 us 白烧。撞槽就回收对方的映射, 用空间换常数时间。 */
+static struct wind_map_slot *wind_slot_of(phys_addr_t pa_page)
+{
+	return &g_map_slots[(pa_page >> PAGE_SHIFT) & (WIND_MAP_SLOTS - 1)];
+}
+
+static void *wind_slot_lookup_locked(phys_addr_t pa_page)
+{
+	unsigned long now = jiffies;
+	struct wind_map_slot *s = wind_slot_of(pa_page);
+	struct wind_phys_map m;
+
+	if (s->area) {
+		if (s->pa == pa_page && !time_after(now, s->stamp + WIND_MAP_TTL)) {
+			s->stamp = now;
+			atomic64_inc(&g_stat_hits);
+			return s->addr;
+		}
+		/* 过期, 或被同槽的别的页挤掉 */
+		wind_slot_free(s);
+		atomic64_inc(&g_stat_evicts);
+	}
+
+	m = wind_map_phys(pa_page, PAGE_SIZE);
+	atomic64_inc(&g_stat_misses);
+	if (!m.addr)
+		return NULL;
+
+	s->pa = pa_page;
+	s->area = m.area;
+	s->addr = m.addr;
+	s->stamp = now;
+	return s->addr;
+}
+
+/* 锁内只做「取映射 + memcpy 到内核缓冲」, copy_to_user 一律放到锁外。
+ * 旧实现在 g_map_mutex 里直接 copy_to_user: 用户页缺页、进程被冻结、
+ * 线程被 SIGSTOP 时, 整个驱动的读路径(含别的线程)全部卡在这把全局锁上,
+ * 表现就是「开几枪之后读一次不动一次」。同时改成 trylock: 争用就退回
+ * 一次性映射, 不排队等锁, 读路径上没有无界等待。
+ * 32 字节以内走栈上缓冲, 更大的块直接退回一次性映射, 不占内核栈。 */
+static bool wind_read_cached_page(phys_addr_t pa_page, size_t off,
+				  void __user *buffer, size_t size, bool safe)
+{
+	u8 tmp[32];
+	void *kva;
+	bool ok = false;
+
+	/* mutex 不能在原子上下文/关中断里拿。断点、trace、netfilter 这些回调
+	 * 里如果走到物理读, 必须退回一次性映射, 否则就是
+	 * "BUG: sleeping function called from invalid context" → panic。 */
+	if (!map_cache || in_atomic() || irqs_disabled())
+		return false;
+	if (off + size > PAGE_SIZE || size > sizeof(tmp))
+		return false;
+
+	if (!mutex_trylock(&g_map_mutex))
+		return false;
+
+	kva = wind_slot_lookup_locked(pa_page);
+	if (kva) {
+		if (safe)
+			kh_dcache_clean_inval_poc((char *)kva + off, size);
+		memcpy(tmp, (char *)kva + off, size);
+		ok = true;
+	}
+	mutex_unlock(&g_map_mutex);
+
+	if (!ok)
+		return false;
+	return copy_to_user(buffer, tmp, size) == 0;
+}
+
+static bool read_physical_direct(phys_addr_t pa, void __user *buffer, size_t size)
+{
+	phys_addr_t base = pa & PAGE_MASK;
+	size_t off = (size_t)(pa - base);
+	struct wind_phys_map m;
+
+	atomic64_inc(&g_stat_reads);
+	/* 页内读走缓存; 缓存被关/在原子上下文/映射失败时回落一次性映射 */
+	if (off + size <= PAGE_SIZE && wind_read_cached_page(base, off, buffer, size, false))
+		return true;
+
+	m = wind_map_phys(base, PAGE_ALIGN(off + size));
+	if (!m.addr)
+		return false;
+	if (copy_to_user(buffer, (char *)m.addr + off, size)) {
+		wind_unmap_phys(&m);
+		return false;
+	}
+	wind_unmap_phys(&m);
+	return true;
+}
+
+static bool write_physical_direct(phys_addr_t pa, const void __user *buffer, size_t size)
+{
+	phys_addr_t base = pa & PAGE_MASK;
+	size_t off = (size_t)(pa - base);
+	struct wind_phys_map m = wind_map_phys(base, PAGE_ALIGN(off + size));
+
+	if (!m.addr)
+		return false;
+	if (copy_from_user((char *)m.addr + off, buffer, size)) {
+		wind_unmap_phys(&m);
+		return false;
+	}
+	kh_flush_dcache((char *)m.addr + off, size);
+	wind_unmap_phys(&m);
+	return true;
+}
+
+static bool read_physical_nocache(phys_addr_t pa, void __user *buffer, size_t size)
+{
+	phys_addr_t base = pa & PAGE_MASK;
+	size_t off = (size_t)(pa - base);
+	struct wind_phys_map m;
+
+	atomic64_inc(&g_stat_reads);
+	if (off + size <= PAGE_SIZE && wind_read_cached_page(base, off, buffer, size, true))
+		return true;
+
+	m = wind_map_phys(base, PAGE_ALIGN(off + size));
+	if (!m.addr)
+		return false;
+	kh_dcache_clean_inval_poc((char *)m.addr + off, size); /* 读前 invalidate, 防 stale cache */
+	if (copy_to_user(buffer, (char *)m.addr + off, size)) {
+		wind_unmap_phys(&m);
+		return false;
+	}
+	wind_unmap_phys(&m);
+	return true;
+}
+
+static bool write_physical_nocache(phys_addr_t pa, const void __user *buffer, size_t size)
+{
+	phys_addr_t base = pa & PAGE_MASK;
+	size_t off = (size_t)(pa - base);
+	struct wind_phys_map m = wind_map_phys(base, PAGE_ALIGN(off + size));
+
+	if (!m.addr)
+		return false;
+	if (copy_from_user((char *)m.addr + off, buffer, size)) {
+		wind_unmap_phys(&m);
+		return false;
+	}
+	kh_flush_dcache((char *)m.addr + off, size);
+	wind_unmap_phys(&m);
+	return true;
+}
+
+/* ---- 模式自适应入口 ---- */
+bool read_physical_address(phys_addr_t pa, void __user *buffer, size_t size, int mode)
+{
+	if (mode == MODE_SAFE)
+		return read_physical_nocache(pa, buffer, size);
+	return read_physical_direct(pa, buffer, size);
+}
+
+bool write_physical_address(phys_addr_t pa, const void __user *buffer, size_t size, int mode)
+{
+	if (mode == MODE_SAFE)
+		return write_physical_nocache(pa, buffer, size);
+	return write_physical_direct(pa, buffer, size);
+}
+
+static struct mm_struct *session_get_mm(struct driver_session *sess)
+{
+	if (!sess || !sess->task)
+		return NULL;
+	return kh_get_task_mm(sess->task);
+}
+
+static bool __read_mm(struct mm_struct *mm, uintptr_t addr, void __user *buffer, size_t size, int mode)
+{
+	while (size > 0)
+	{
+		phys_addr_t pa;
+		size_t chunk;
+
+		pa = translate_linear_address(mm, addr);
+		if (!pa)
+		{
+			if (wind_tracing())
+				pr_info("wind: rd va=%lx 翻译失败\n", (unsigned long)addr);
+			break;
+		}
+
+		chunk = min(size, (size_t)(PAGE_SIZE - (addr & (PAGE_SIZE - 1))));
+		if (wind_tracing())
+			pr_info("wind: rd va=%lx -> pa=%llx chunk=%zu\n",
+				(unsigned long)addr, (unsigned long long)pa, chunk);
+		if (!read_physical_address(pa, buffer, chunk, mode))
+			break;
+
+		addr += chunk;
+		buffer += chunk;
+		size -= chunk;
+	}
+	return size == 0;
+}
+
+static bool __write_mm(struct mm_struct *mm, uintptr_t addr, const void __user *buffer, size_t size, int mode)
+{
+	while (size > 0)
+	{
+		phys_addr_t pa;
+		size_t chunk;
+
+		pa = translate_linear_address(mm, addr);
+		if (!pa)
+			break;
+
+		chunk = min(size, (size_t)(PAGE_SIZE - (addr & (PAGE_SIZE - 1))));
+		if (!write_physical_address(pa, buffer, chunk, mode))
+			break;
+
+		addr += chunk;
+		buffer += chunk;
+		size -= chunk;
+	}
+	return size == 0;
+}
+
+bool read_process_memory(struct driver_session *sess, uintptr_t addr, void __user *buffer, size_t size)
+{
+	struct mm_struct *mm;
+	bool result;
+
+	if (trace_read > 0) {
+		int n = atomic_inc_return(&g_trace_seq);
+
+		if (n <= trace_read)
+			pr_info("wind: rd#%d va=%lx size=%zu mode=%d\n",
+				n, (unsigned long)addr, size, sess ? sess->read_mode : -1);
+	}
+
+	if (sess && sess->task && sess->task->mm == current->mm) {
+		void *tmp;
+
+		if (!size || size > PAGE_SIZE * 4)
+			return false;
+		tmp = kmalloc(size, GFP_KERNEL);
+		if (!tmp)
+			return false;
+		if (copy_from_user(tmp, (void __user *)addr, size) != 0) {
+			kfree(tmp);
+			return false;
+		}
+		if (copy_to_user(buffer, tmp, size) != 0) {
+			kfree(tmp);
+			return false;
+		}
+		kfree(tmp);
+		return true;
+	}
+
+	mm = session_get_mm(sess);
+	if (!mm) {
+		if (wind_tracing())
+			pr_info("wind: rd 取 mm 失败\n");
+		return false;
+	}
+	if (wind_tracing())
+		pr_info("wind: rd mm=%px pgd=%px\n", mm, wind_mm_pgd(mm));
+
+	result = __read_mm(mm, addr, buffer, size, sess->read_mode);
+	if (wind_tracing())
+		pr_info("wind: rd 完成 result=%d\n", (int)result);
+	wind_mmput(mm);
+	return result;
+}
+
+bool write_process_memory(struct driver_session *sess, uintptr_t addr, const void __user *buffer, size_t size)
+{
+	struct mm_struct *mm;
+	bool result;
+
+	if (sess && sess->task && sess->task->mm == current->mm) {
+		void *tmp;
+
+		if (!size || size > PAGE_SIZE * 4)
+			return false;
+		tmp = kmalloc(size, GFP_KERNEL);
+		if (!tmp)
+			return false;
+		if (copy_from_user(tmp, buffer, size) != 0) {
+			kfree(tmp);
+			return false;
+		}
+		if (copy_to_user((void __user *)addr, tmp, size) != 0) {
+			kfree(tmp);
+			return false;
+		}
+		kfree(tmp);
+		return true;
+	}
+
+	mm = session_get_mm(sess);
+	if (!mm)
+		return false;
+
+	result = __write_mm(mm, addr, buffer, size, sess->read_mode);
+	wind_mmput(mm);
+	return result;
+}
+
+long read_process_memory_batch(struct driver_session *sess, PBATCH_REQUEST req)
+{
+	struct mm_struct *mm;
+	uint32_t i;
+	long done = 0;
+
+	mm = session_get_mm(sess);
+	if (!mm)
+		return -ESRCH;
+
+	for (i = 0; i < req->count; i++) {
+		PBATCH_ITEM it = &req->items[i];
+		if (it->size == 0 || it->buffer == NULL)
+			continue;
+		if (__read_mm(mm, it->addr, (void __user *)it->buffer, it->size, sess->read_mode))
+			done++;
+	}
+
+	wind_mmput(mm);
+	return done;
+}
+
+long write_process_memory_batch(struct driver_session *sess, PBATCH_REQUEST req)
+{
+	struct mm_struct *mm;
+	uint32_t i;
+	long done = 0;
+
+	mm = session_get_mm(sess);
+	if (!mm)
+		return -ESRCH;
+
+	for (i = 0; i < req->count; i++) {
+		PBATCH_ITEM it = &req->items[i];
+		if (it->size == 0 || it->buffer == NULL)
+			continue;
+		if (__write_mm(mm, it->addr, (const void __user *)it->buffer, it->size, sess->read_mode))
+			done++;
+	}
+
+	wind_mmput(mm);
+	return done;
+}
+
+int mmap_process_memory(struct driver_session *sess, struct vm_area_struct *vma,
+                        uintptr_t target_va, size_t length)
+{
+	struct mm_struct *mm;
+	phys_addr_t pa;
+	unsigned long off;
+	uintptr_t va;
+	int ret = 0;
+
+	mm = session_get_mm(sess);
+	if (!mm)
+		return -ESRCH;
+
+	if (sess->read_mode == MODE_SAFE) {
+		wind_mmput(mm);
+		return -EOPNOTSUPP;
+	}
+
+	va = target_va & PAGE_MASK;
+	off = vma->vm_start;
+	while (va < target_va + length) {
+
+		pa = translate_linear_address(mm, va);
+		if (!pa)
+			break;
+		pa &= PAGE_MASK;
+		if (wind_remap_pfn_range(vma, off, __phys_to_pfn(pa), PAGE_SIZE, vma->vm_page_prot)) {
+			ret = -EAGAIN;
+			break;
+		}
+		va += PAGE_SIZE;
+		off += PAGE_SIZE;
+	}
+
+	wind_mmput(mm);
+	return (off > vma->vm_start) ? 0 : ret;
+}
+
+struct driver_session *session_create(void)
+{
+	struct driver_session *sess;
+
+	sess = kzalloc(sizeof(*sess), GFP_KERNEL);
+	if (!sess)
+		return NULL;
+	spin_lock_init(&sess->lock);
+	sess->read_mode = MODE_FAST;
+	return sess;
+}
+
+void session_bind(struct driver_session *sess, pid_t pid)
+{
+	struct pid *pid_struct;
+	struct task_struct *task;
+
+	if (!sess)
+		return;
+
+	wind_map_cache_purge();
+
+	if (sess->task) {
+		put_task_struct(sess->task);
+		sess->task = NULL;
+	}
+	sess->bound = false;
+
+	pid_struct = find_get_pid(pid);
+	if (!pid_struct)
+		return;
+	task = pid_task(pid_struct, PIDTYPE_PID);
+	put_pid(pid_struct);
+	if (!task)
+		return;
+
+	if (!task->mm)
+		return;
+
+	get_task_struct(task);
+	sess->task = task;
+	sess->bound = true;
+}
+
+void session_destroy(struct driver_session *sess)
+{
+	if (!sess)
+		return;
+	if (sess->task) {
+		put_task_struct(sess->task);
+		sess->task = NULL;
+	}
+	sess->bound = false;
+	wind_map_cache_purge();
+	kfree(sess);
+}

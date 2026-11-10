@@ -53,3 +53,40 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# --- TomieSU 项目条目 ---
+.idea
+.vscode
+CLAUDE.md
+AGENTS.md
+.DS_Store
+/target
+.cargo/config.toml
+__pycache__
+/dist
+/out
+/repack-config.json
+/userspace/tsud/.lkm_image_bootstrap.o
+/temp.gz
+*.apk
+*.img
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.key
+*.pem
+.env
+.env.*
+local.properties
+/tools/device-backup.py
+/tools/extract-ota.py
+# Gradle / Android 构建产物（保留 third_party 下的 vendored 二进制）
+/manager/app/build/
+/manager/build/
+/manager/.gradle/
+/manager/.kotlin/
+/manager/app/.cxx/
+
+# jniLibs 预编译库必须入库
+!/manager/app/src/main/jniLibs/**/*.so

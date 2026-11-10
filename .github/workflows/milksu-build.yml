@@ -1,0 +1,132 @@
+name: Build TomieSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      kmi_scope:
+        description: KMI coverage
+        type: choice
+        default: all
+        options:
+          - android14-6.1
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tomiesu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TOMIESU_CACHE: /opt/tomiesu
+      TOMIESU_JOBS: 2
+      TOMIESU_ABIS: 'arm64-v8a x86_64'
+      TOMIESU_DDK_RELEASE: '20260828'
+      TOMIESU_SIGNING_PROFILE: release
+      TOMIESU_REQUIRE_RELEASE_SIGNING: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check build scripts
+        shell: bash
+        run: |
+          for script in tools/build-*.sh tools/bootstrap-*.sh; do
+            bash -n "$script"
+          done
+
+      - name: Prepare pinned Linux tools
+        shell: bash
+        run: |
+          sudo env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/bootstrap-tomiesu.sh all
+          sudo env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/bootstrap-kpatch-toolchain.sh
+
+      - name: Restore dedicated TomieSU release signing key
+        env:
+          TOMIESU_RELEASE_KEYSTORE_B64: ${{ secrets.TOMIESU_RELEASE_KEYSTORE_B64 }}
+          TOMIESU_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.TOMIESU_RELEASE_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          sudo --preserve-env=TOMIESU_RELEASE_KEYSTORE_B64,TOMIESU_RELEASE_KEYSTORE_PASSWORD python3 - "$GITHUB_WORKSPACE/out/private" <<'PY'
+          import base64, os, pathlib, sys
+          os.umask(0o077)
+          key = os.environ.get("TOMIESU_RELEASE_KEYSTORE_B64", "")
+          password = os.environ.get("TOMIESU_RELEASE_KEYSTORE_PASSWORD", "")
+          if not key or not password:
+              raise SystemExit("Configure the two TomieSU release signing secrets before running this workflow")
+          private = pathlib.Path(sys.argv[1])
+          private.mkdir(parents=True, mode=0o700, exist_ok=True)
+          private.chmod(0o700)
+          store = private / "tomiesu-release.p12"
+          password_file = private / "release-password"
+          store.write_bytes(base64.b64decode(key, validate=True))
+          password_file.write_text(password + "\n")
+          store.chmod(0o600)
+          password_file.chmod(0o600)
+          PY
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-signing.sh
+
+      - name: Validate Rust and build priority ARM64 modules
+        shell: bash
+        run: |
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-check
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh android-clippy
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh format-check
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 both
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android14-6.1 wind
+
+      - name: Build real 5.10 regression assets and run all host tests
+        shell: bash
+        run: |
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" python3 tools/build-matrix.py --priority-already-passed --kmi android12-5.10 --stage-assets
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh host-tests
+
+      - name: Build remaining KMI modules
+        if: inputs.kmi_scope == 'all'
+        shell: bash
+        run: |
+          for kmi in android13-5.10 android13-5.15 android14-5.15 android15-6.6 android16-6.12 android17-6.18; do
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" both
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh "$kmi" wind
+          done
+
+      - name: Build KPatch, ksuinit, tsud, Manager and signed repack
+        shell: bash
+        env:
+          TOMIESU_REQUIRE_FULL_MATRIX: ${{ inputs.kmi_scope == 'all' && '1' || '0' }}
+        run: |
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-kpatch.sh
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-host.sh
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-release.sh snapshot --source-ready
+          for stage in ksuinit tsud manager repack; do
+            sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" TOMIESU_ABIS="$TOMIESU_ABIS" TOMIESU_REQUIRE_FULL_MATRIX="$TOMIESU_REQUIRE_FULL_MATRIX" bash tools/build-release.sh "$stage"
+          done
+
+      - name: Upload TomieSU build products
+        uses: actions/upload-artifact@v7
+        with:
+          name: TomieSU-universal
+          path: |
+            out/manager/*.apk
+            out/aarch64/*.ko
+            out/ksuinit/**
+            out/tsud/**
+            out/kpatch/**
+            out/tools/kptools
+            out/tools/tsud
+            out/manifests/**
+            out/toolchain/**
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: TomieSU-build-logs
+          path: out/build-logs/
