@@ -109,7 +109,13 @@ fn close_ksu_fds() {
 pub fn unload() -> Result<()> {
     info!("unload: starting KernelSU unload sequence");
 
-    crate::unload_policy::ensure_supported(Path::new("/sys/module/kernelsu/parameters"))?;
+    // 模块名已从 kernelsu 改为 tomiesu，旧镜像上仍可能是 kernelsu，两个都认。
+    let module_params = if Path::new("/sys/module/tomiesu/parameters").exists() {
+        Path::new("/sys/module/tomiesu/parameters")
+    } else {
+        Path::new("/sys/module/kernelsu/parameters")
+    };
+    crate::unload_policy::ensure_supported(module_params)?;
     let guard = crate::susfsd::status_json()?;
     if guard.get("loaded").and_then(serde_json::Value::as_bool) == Some(true) {
         crate::susfsd::unload()
@@ -148,10 +154,13 @@ pub fn unload() -> Result<()> {
     info!("unload: closing all ksu fds...");
     close_ksu_fds();
 
-    // 4. delete_module("kernelsu")
-    info!("unload: removing kernelsu module...");
-    if let Err(e) = rustix::system::delete_module(c"kernelsu", 0) {
-        warn!("unload: delete_module kernelsu failed: {e}");
+    // 4. delete_module：优先卸载 tomiesu，回退旧内核模块名 kernelsu
+    info!("unload: removing tomiesu module...");
+    if let Err(e) = rustix::system::delete_module(c"tomiesu", 0) {
+        warn!("unload: delete_module tomiesu failed: {e}");
+        if let Err(e) = rustix::system::delete_module(c"kernelsu", 0) {
+            warn!("unload: delete_module kernelsu also failed: {e}");
+        }
     }
 
     // 5. start (Android init start command - restarts all services)

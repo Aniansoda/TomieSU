@@ -817,18 +817,19 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
                 "Cannot work with Magisk patched image"
             );
 
-            println!("- Adding KernelSU LKM");
-            let is_kernelsu_patched = cpio.exists("kernelsu.ko");
+            println!("- Adding TomieSU LKM");
+            // 兼容旧版：历史镜像里模块名是 kernelsu.ko，本版改为 tomiesu.ko。
+            let module_present = cpio.exists("tomiesu.ko") || cpio.exists("kernelsu.ko");
 
-            if !is_kernelsu_patched && cpio.exists("init") {
+            if !module_present && cpio.exists("init") {
                 cpio.mv("init", "init.real")?;
             }
 
             cpio.add("init", CpioEntry::regular(0o755, ksu_init))?;
-            cpio.add("kernelsu.ko", CpioEntry::regular(0o755, kernelsu_ko))?;
+            cpio.add("tomiesu.ko", CpioEntry::regular(0o755, kernelsu_ko))?;
 
             #[cfg(target_os = "android")]
-            if (backup || (!is_kernelsu_patched && flash))
+            if (backup || (!module_present && flash))
                 && let Err(e) = do_backup(&mut cpio, &boot_image_file)
             {
                 if flash || backup {
@@ -1030,8 +1031,8 @@ pub fn restore(args: BootRestoreArgs) -> Result<()> {
         };
 
     ensure!(
-        cpio.exists("kernelsu.ko"),
-        "boot image is not patched by KernelSU"
+        cpio.exists("tomiesu.ko") || cpio.exists("kernelsu.ko"),
+        "boot image is not patched by TomieSU"
     );
 
     #[cfg(target_os = "android")]
@@ -1119,7 +1120,9 @@ fn rebuild_without_ksu(
     cpio: &mut Cpio,
     vendor_ramdisk_idx: Option<usize>,
 ) -> Result<Vec<u8>> {
-    println!("- Removing KernelSU from boot image");
+    println!("- Removing TomieSU from boot image");
+    cpio.rm("tomiesu.ko", false);
+    // 旧镜像里的模块名
     cpio.rm("kernelsu.ko", false);
     if cpio.exists("init.real") {
         cpio.mv("init.real", "init")?;
