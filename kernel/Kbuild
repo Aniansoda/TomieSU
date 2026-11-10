@@ -140,6 +140,9 @@ endif
 # 可选：把 Wind 驱动并入同一个 tomiesu.ko（CONFIG_WIND=y）
 ifeq ($(CONFIG_WIND),y)
 ccflags-y += -DCONFIG_WIND=1
+# Wind 的跳板/影子页代码对 void* 定长缓冲做 memset，clang fortify 会误报
+# __write_overflow_field；该告警类别在 wind 变体里整体关闭，不影响非 wind 变体。
+ccflags-y += -Wno-attribute-warning
 tomiesu-objs += wind/sym.o
 tomiesu-objs += wind/memory.o
 tomiesu-objs += wind/process.o
