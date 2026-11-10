@@ -776,14 +776,14 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
             #[cfg(target_os = "android")]
             {
                 println!("- KMI: {kmi}");
-                let name = format!("{kmi}_kernelsu.ko");
+                let name = format!("{kmi}_tomiesu.ko");
                 assets::get_asset(&name).with_context(|| format!("Failed to load {name}"))?
             }
             #[cfg(not(target_os = "android"))]
             {
                 println!("- KMI: {kmi}");
                 println!("- Arch: {arch}");
-                let name = format!("{arch}/{kmi}_kernelsu.ko");
+                let name = format!("{arch}/{kmi}_tomiesu.ko");
                 assets::get_asset(&name).with_context(|| format!("Failed to load {name}"))?
             }
         };

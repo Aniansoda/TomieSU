@@ -2573,11 +2573,11 @@ fn inject_image(
 fn embedded_module_name(kmi: &str) -> String {
     #[cfg(target_os = "android")]
     {
-        format!("{kmi}_kernelsu.ko")
+        format!("{kmi}_tomiesu.ko")
     }
     #[cfg(not(target_os = "android"))]
     {
-        format!("aarch64/{kmi}_kernelsu.ko")
+        format!("aarch64/{kmi}_tomiesu.ko")
     }
 }
 
@@ -3021,9 +3021,9 @@ mod tests {
     fn embedded_module_uses_release_asset_layout() {
         let name = embedded_module_name("android12-5.10");
         #[cfg(target_os = "android")]
-        assert_eq!(name, "android12-5.10_kernelsu.ko");
+        assert_eq!(name, "android12-5.10_tomiesu.ko");
         #[cfg(not(target_os = "android"))]
-        assert_eq!(name, "aarch64/android12-5.10_kernelsu.ko");
+        assert_eq!(name, "aarch64/android12-5.10_tomiesu.ko");
         assert!(!assets::get_asset_data(&name).unwrap().is_empty());
     }
 

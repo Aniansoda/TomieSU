@@ -535,7 +535,11 @@ pub fn install_with_state(
 
 #[cfg(any(target_os = "android", test))]
 fn device_operation_root(directory: &Path) -> &Path {
-    if directory.starts_with(LEGACY_IMAGE_ROOT) {
+    // IMAGE_ROOT 是 LEGACY_IMAGE_ROOT 的子目录，必须先判更长的那个，
+    // 否则当前目录会被误判成历史目录。
+    if directory.starts_with(IMAGE_ROOT) {
+        Path::new(IMAGE_ROOT)
+    } else if directory.starts_with(LEGACY_IMAGE_ROOT) {
         Path::new(LEGACY_IMAGE_ROOT)
     } else {
         Path::new(IMAGE_ROOT)
