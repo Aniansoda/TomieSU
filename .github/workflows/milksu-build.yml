@@ -53,7 +53,7 @@ jobs:
           sudo env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/bootstrap-tomiesu.sh all
           sudo env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/bootstrap-kpatch-toolchain.sh
 
-      - name: Restore dedicated TomieSU release signing key
+      - name: Prepare release signing key (self-generate when secrets absent)
         env:
           TOMIESU_RELEASE_KEYSTORE_B64: ${{ secrets.TOMIESU_RELEASE_KEYSTORE_B64 }}
           TOMIESU_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.TOMIESU_RELEASE_KEYSTORE_PASSWORD }}
@@ -65,7 +65,10 @@ jobs:
           key = os.environ.get("TOMIESU_RELEASE_KEYSTORE_B64", "")
           password = os.environ.get("TOMIESU_RELEASE_KEYSTORE_PASSWORD", "")
           if not key or not password:
-              raise SystemExit("Configure the two TomieSU release signing secrets before running this workflow")
+              # 未配置 secrets 时由 tools/build-signing.sh 现场自生成 release 身份，
+              # 让任何人 fork 后都能自构建所有模块并产出已签名 APK
+              print("::warning::TOMIESU_RELEASE_KEYSTORE_* 未配置，使用自行生成的 release 签名身份")
+              raise SystemExit(0)
           private = pathlib.Path(sys.argv[1])
           private.mkdir(parents=True, mode=0o700, exist_ok=True)
           private.chmod(0o700)
