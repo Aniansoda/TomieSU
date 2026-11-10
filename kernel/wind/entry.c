@@ -935,7 +935,9 @@ static void hook_remove(void)
 	g_null_fops = NULL;
 }
 
-static int __init driver_entry(void)
+/* 并入 tomiesu.ko 后由 wind_driver_init() 在 .text 调用，
+ * 不能再放 .init.text/.exit.text，否则 modpost 报 section mismatch。 */
+static int driver_entry(void)
 {
 	int ret;
 
@@ -1011,7 +1013,7 @@ static int __init driver_entry(void)
 	return 0;
 }
 
-static void __exit driver_unload(void)
+static void driver_unload(void)
 {
 	printk("[+] wind driver_unload");
 	gyro_remove();
