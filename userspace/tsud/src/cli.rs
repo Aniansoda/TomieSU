@@ -747,6 +747,7 @@ pub fn run() -> Result<()> {
             post_magica,
             kmi,
             package_name,
+            wind,
         } => {
             if let Some(port) = magica {
                 return crate::magica::run(port, &package_name, allow_shell).map_err(|e| {

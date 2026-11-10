@@ -103,8 +103,9 @@ struct ksu_uid_should_umount_cmd {
 };
 
 struct ksu_get_manager_appid_cmd {
-    __u32 appid; /* Output: manager app id */
+    __u32 appid; /* Input: 0 或 KSU_MANAGER_REFRESH_REQUEST；Output: manager app id */
 };
+static const __u32 KSU_MANAGER_REFRESH_REQUEST = 0x4d535246;
 
 struct ksu_get_app_profile_cmd {
     struct app_profile profile; /* Input/Output: app profile structure */
