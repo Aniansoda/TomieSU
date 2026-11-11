@@ -117,6 +117,16 @@ jobs:
             sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" TOMIESU_ABIS="$TOMIESU_ABIS" TOMIESU_REQUIRE_FULL_MATRIX="$TOMIESU_REQUIRE_FULL_MATRIX" bash tools/build-release.sh "$stage"
           done
 
+      - name: Normalize output ownership
+        if: always()
+        shell: bash
+        run: |
+          # 各 build-* 阶段用 sudo 运行，产物归 root，upload-artifact 以 runner 身份读取会 EACCES。
+          if [[ -d out ]]; then
+            sudo chown -R "$(id -u):$(id -g)" out || true
+            sudo chmod -R u+rwX out || true
+          fi
+
       - name: Upload TomieSU build products
         uses: actions/upload-artifact@v7
         with:
