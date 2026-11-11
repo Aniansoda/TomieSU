@@ -499,6 +499,15 @@ pub struct BootPatchArgs {
     #[arg(long, default_value = "false")]
     no_install: bool,
 
+    /// Build release string the manager wants spoofed (accepted for CLI
+    /// compatibility; the value is applied by the kernel side, not by boot patch)
+    #[arg(long, default_value = None)]
+    spoof_release: Option<String>,
+
+    /// Build version string the manager wants spoofed
+    #[arg(long, default_value = None)]
+    spoof_version: Option<String>,
+
     #[cfg(not(target_os = "android"))]
     #[arg(long, default_value = "aarch64")]
     arch: String,
@@ -637,6 +646,8 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
             enable_adbd,
             adb_debug_prop,
             no_install,
+            spoof_release: _,
+            spoof_version: _,
             #[cfg(target_os = "android")]
             ota,
             #[cfg(target_os = "android")]

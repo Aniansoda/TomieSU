@@ -43,7 +43,26 @@ import java.util.zip.ZipFile
 private const val TAG = "KsuCli"
 
 fun getKsuDaemonPath(): String {
-    return ksuApp.applicationInfo.nativeLibraryDir + File.separator + "libtsud.so"
+    val src = File(ksuApp.applicationInfo.nativeLibraryDir, "libtsud.so")
+    // nativeLibraryDir 里的 .so 在部分 ROM 上没有执行位，libsu 会直接 exec 它，
+    // 结果就是 Shell 起不来、所有命令返回 -2。这里优先复用一个可执行的副本。
+    if (src.isFile && !src.canExecute()) {
+        val dst = File(ksuApp.filesDir, "tsud")
+        val same = dst.isFile && dst.length() == src.length()
+        if (!same) {
+            runCatching {
+                src.copyTo(dst, overwrite = true)
+                dst.setReadable(true, true)
+                dst.setWritable(false, false)
+                dst.setExecutable(true, false)
+            }.onFailure { Log.w(TAG, "stage tsud failed", it) }
+        }
+        if (dst.isFile && dst.canExecute()) {
+            Log.i(TAG, "using staged tsud at ${dst.absolutePath}")
+            return dst.absolutePath
+        }
+    }
+    return src.absolutePath
 }
 
 data class FlashResult(val code: Int, val err: String, val showReboot: Boolean, val outputFile: File? = null) {
@@ -52,8 +71,10 @@ data class FlashResult(val code: Int, val err: String, val showReboot: Boolean, 
 }
 
 object KsuCli {
-    val SHELL: Shell = createRootShell()
-    val GLOBAL_MNT_SHELL: Shell = createRootShell(true)
+    // 延迟到真正需要时再起 shell：KsuCli 类初始化早于 getKsuDaemonPath() 的
+    // 可执行位自愈，提前建 shell 会把不可执行的 libtsud.so 钉死在缓存里。
+    val SHELL: Shell by lazy { createRootShell() }
+    val GLOBAL_MNT_SHELL: Shell by lazy { createRootShell(true) }
 }
 
 fun getRootShell(globalMnt: Boolean = false): Shell {
