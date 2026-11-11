@@ -683,7 +683,7 @@ const UMOUNT_CONFIG_MAGIC: u32 = 0x4B53_554D; // KSUM
 pub fn save_umount_config() -> Result<()> {
     let list_output = umount_list_list().context("Failed to get umount list from kernel")?;
 
-    let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
+    let config_path = Path::new(crate::defs::UMOUNT_CONFIG_PATH);
 
     // Ensure directory exists
     if let Some(parent) = config_path.parent() {
@@ -713,12 +713,12 @@ pub fn save_umount_config() -> Result<()> {
         }
     }
 
-    info!("Saved umount config to {}", defs::UMOUNT_CONFIG_PATH);
+    info!("Saved umount config to {}", crate::defs::UMOUNT_CONFIG_PATH);
     Ok(())
 }
 
 pub fn load_umount_config() -> Result<()> {
-    let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
+    let config_path = Path::new(crate::defs::UMOUNT_CONFIG_PATH);
 
     if !config_path.exists() {
         info!("Umount config file does not exist, skipping");
@@ -786,7 +786,7 @@ pub fn apply_umount_config() -> Result<()> {
 
 pub fn remove_umount_entry_from_config(target_path: &str) -> Result<()> {
     umount_list_del(target_path).context("Failed to delete umount entry from kernel")?;
-    let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
+    let config_path = Path::new(crate::defs::UMOUNT_CONFIG_PATH);
 
     if !config_path.exists() {
         return Ok(());
@@ -860,13 +860,13 @@ pub fn remove_umount_entry_from_config(target_path: &str) -> Result<()> {
     info!(
         "Removed umount entry '{}' from config {}",
         target_path,
-        defs::UMOUNT_CONFIG_PATH
+        crate::defs::UMOUNT_CONFIG_PATH
     );
     Ok(())
 }
 
 pub fn clear_umount_config() -> Result<()> {
-    let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
+    let config_path = Path::new(crate::defs::UMOUNT_CONFIG_PATH);
 
     // Wipe kernel list first
     umount_list_wipe().context("Failed to wipe kernel umount list")?;
@@ -874,7 +874,10 @@ pub fn clear_umount_config() -> Result<()> {
     // Delete config file if it exists
     if config_path.exists() {
         fs::remove_file(config_path).context("Failed to remove umount config file")?;
-        info!("Removed umount config file: {}", defs::UMOUNT_CONFIG_PATH);
+        info!(
+            "Removed umount config file: {}",
+            crate::defs::UMOUNT_CONFIG_PATH
+        );
     } else {
         info!("Umount config file does not exist, skipping removal");
     }
