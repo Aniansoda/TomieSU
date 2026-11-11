@@ -75,7 +75,7 @@ print_title() {
 }
 
 check_sepolicy() {
-    /data/adb/tsud sepolicy check "$1"
+    /data/adb/tomiesu/bin/tsud sepolicy check "$1"
     return $?
 }
 
@@ -270,7 +270,7 @@ check_managed_features() {
     [ -z "$feature" ] && continue
 
     # Check feature status using tsud
-    local status=$(/data/adb/tsud feature check "$feature" 2>/dev/null)
+    local status=$(/data/adb/tomiesu/bin/tsud feature check "$feature" 2>/dev/null)
 
     case "$status" in
       "unsupported")
