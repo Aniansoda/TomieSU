@@ -1,11 +1,14 @@
 #![allow(clippy::unreadable_literal)]
 use anyhow::{Context, Result, bail};
+use log::{info, warn};
 
 use crate::ksu_uapi;
 use std::cell::Cell;
 use std::fs;
 use std::io;
+use std::io::{BufReader, Read, Write};
 use std::os::fd::RawFd;
+use std::path::Path;
 use std::sync::OnceLock;
 
 // sigsys handler
@@ -676,11 +679,9 @@ pub fn umount_list_list() -> Result<String> {
 const UMOUNT_CONFIG_MAGIC: u32 = 0x4B53_554D; // KSUM
 
 // Magic number for umount config file
-const UMOUNT_CONFIG_MAGIC: u32 = 0x4B53_554D; // KSUM
 
 pub fn save_umount_config() -> Result<()> {
-    let list_output =
-        ksucalls::umount_list_list().context("Failed to get umount list from kernel")?;
+    let list_output = umount_list_list().context("Failed to get umount list from kernel")?;
 
     let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
 
@@ -740,7 +741,7 @@ pub fn load_umount_config() -> Result<()> {
     }
 
     // Wipe existing list first
-    ksucalls::umount_list_wipe().context("Failed to wipe existing umount list")?;
+    umount_list_wipe().context("Failed to wipe existing umount list")?;
 
     // Read entries
     let mut count = 0;
@@ -769,7 +770,7 @@ pub fn load_umount_config() -> Result<()> {
         let flags = u32::from_le_bytes(flags_buf);
 
         // Add to kernel list
-        ksucalls::umount_list_add(&path, flags)
+        umount_list_add(&path, flags)
             .with_context(|| format!("Failed to add umount path: {path}"))?;
 
         count += 1;
@@ -784,7 +785,7 @@ pub fn apply_umount_config() -> Result<()> {
 }
 
 pub fn remove_umount_entry_from_config(target_path: &str) -> Result<()> {
-    ksucalls::umount_list_del(target_path).context("Failed to delete umount entry from kernel")?;
+    umount_list_del(target_path).context("Failed to delete umount entry from kernel")?;
     let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
 
     if !config_path.exists() {
@@ -868,7 +869,7 @@ pub fn clear_umount_config() -> Result<()> {
     let config_path = Path::new(defs::UMOUNT_CONFIG_PATH);
 
     // Wipe kernel list first
-    ksucalls::umount_list_wipe().context("Failed to wipe kernel umount list")?;
+    umount_list_wipe().context("Failed to wipe kernel umount list")?;
 
     // Delete config file if it exists
     if config_path.exists() {
