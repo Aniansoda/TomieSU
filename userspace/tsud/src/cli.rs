@@ -167,7 +167,11 @@ enum Commands {
         #[command(subcommand)]
         command: Kernel,
     },
-
+    /// Read or write kernel extension state (KSU_IOCTL_EXTENSION)
+    Extension {
+        #[command(subcommand)]
+        command: ExtensionOp,
+    },
     /// Resetprop - Magisk-compatible system property tool
     #[command(disable_help_flag = true)]
     Resetprop {
@@ -540,11 +544,6 @@ enum Kernel {
     Umount {
         #[command(subcommand)]
         command: UmountOp,
-    },
-    /// Read or write kernel extension state (KSU_IOCTL_EXTENSION)
-    Extension {
-        #[command(subcommand)]
-        command: ExtensionOp,
     },
     /// Fake CPU identity (MIDR/HWCAP/BogoMIPS) at runtime
     SpoofCpu {
@@ -988,7 +987,11 @@ pub fn run() -> Result<()> {
                 } else {
                     println!("扩展 ABI 版本: {abi}");
                 }
-                let handlers = if abi >= 2 { ksucalls::enumerate_extensions()?.len() } else { 0 };
+                let handlers = if abi >= 2 {
+                    ksucalls::enumerate_extensions()?.len()
+                } else {
+                    0
+                };
                 println!("已注册处理函数: {handlers}");
                 Ok(())
             }
@@ -999,7 +1002,10 @@ pub fn run() -> Result<()> {
                 if list.is_empty() {
                     println!("内核没有上报处理函数（ABI < 2 或未注册任何扩展）");
                 } else {
-                    println!("{:>3}  {:<18} {:<12} {:<8} {}", "ID", "NAME", "CAPS", "MIN_ABI", "FORCED");
+                    println!(
+                        "{:>3}  {:<18} {:<12} {:<8} {}",
+                        "ID", "NAME", "CAPS", "MIN_ABI", "FORCED"
+                    );
                     for d in list {
                         println!(
                             "{:>3}  {:<18} 0x{:08x}   {:<8} {}",
@@ -1029,15 +1035,15 @@ pub fn run() -> Result<()> {
             Kernel::NukeExt4Sysfs { mnt } => ksucalls::nuke_ext4_sysfs(&mnt),
             Kernel::Umount { command } => match command {
                 UmountOp::Add { mnt, flags } => ksucalls::umount_list_add(&mnt, flags),
-                UmountOp::Remove { mnt } => umount::remove_umount_entry_from_config(&mnt),
+                UmountOp::Remove { mnt } => ksucalls::remove_umount_entry_from_config(&mnt),
                 UmountOp::Del { mnt } => ksucalls::umount_list_del(&mnt),
                 UmountOp::List => {
                     print!("{}", ksucalls::umount_list_list()?);
                     Ok(())
                 }
-                UmountOp::Save => umount::save_umount_config(),
-                UmountOp::Apply => umount::apply_umount_config(),
-                UmountOp::ClearCustom => umount::clear_umount_config(),
+                UmountOp::Save => ksucalls::save_umount_config(),
+                UmountOp::Apply => ksucalls::apply_umount_config(),
+                UmountOp::ClearCustom => ksucalls::clear_umount_config(),
                 UmountOp::Wipe => ksucalls::umount_list_wipe(),
             },
             Kernel::SpoofCpu {

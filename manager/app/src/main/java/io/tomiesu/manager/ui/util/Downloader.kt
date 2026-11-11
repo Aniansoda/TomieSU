@@ -59,7 +59,7 @@ fun checkNewCiVersion(): LatestVersionInfo = checkReleaseVersion("tags/manager-c
 
 private fun checkReleaseVersion(endpoint: String, isCi: Boolean): LatestVersionInfo {
     if (!isNetworkAvailable(ksuApp)) return LatestVersionInfo()
-    val url = "https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/$endpoint"
+    val url = "https://api.github.com/repos/Aniansoda/TomieSU/releases/$endpoint"
     return runCatching {
         ksuApp.okhttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (!response.isSuccessful) {
@@ -84,7 +84,7 @@ private fun checkReleaseVersion(endpoint: String, isCi: Boolean): LatestVersionI
                         return LatestVersionInfo()
                     }
                 val downloadUrl = apk.optString("browser_download_url")
-                    .takeIf { it.startsWith("https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/download/manager-ci/") }
+                    .takeIf { it.startsWith("https://github.com/Aniansoda/TomieSU/releases/download/manager-ci/") }
                     ?: return LatestVersionInfo()
                 return LatestVersionInfo(versionCode, downloadUrl, changelog)
             }
