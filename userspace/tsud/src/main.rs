@@ -72,6 +72,8 @@ mod sulog;
 #[cfg(target_os = "android")]
 mod susfsd;
 #[cfg(target_os = "android")]
+mod umount;
+#[cfg(target_os = "android")]
 mod unload;
 #[cfg(any(target_os = "android", test))]
 mod unload_policy;

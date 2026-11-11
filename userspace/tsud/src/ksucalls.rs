@@ -444,3 +444,210 @@ pub fn set_ksu_no_new_privs() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 扩展框架（KSU_IOCTL_EXTENSION）
+//
+// 内核侧由 kernel/extension/ 提供，uapi 见 uapi/extension.h。统一 ioctl 的
+// 前四个字段（id/op/supported/api_version）在所有 id 上语义一致，具体负载
+// 走 value 或 user_ptr。
+// ---------------------------------------------------------------------------
+
+/// 探测一次内核说的扩展 ABI 版本，0 表示内核还没有能力协商。
+static EXTENSION_API_VERSION: OnceLock<u32> = OnceLock::new();
+
+/// 单个扩展的运行时状态。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExtensionState {
+    /// 置位类的开关值，多数扩展用 bit 0。
+    pub value: u64,
+    /// 内核通告的能力位（KSU_EXTENSION_FLAG_*）。
+    pub caps: u32,
+    /// 内核说的扩展 ABI 版本，旧内核为 0。
+    pub api_version: u32,
+    /// 内核是否注册了这个 id 的处理函数。
+    pub supported: bool,
+    /// 是否被 force_extension= 启动参数锁定（锁定时内核拒绝 SET）。
+    pub forced: bool,
+}
+
+impl ExtensionState {
+    /// caps 里除 SUPPORTED/FORCED 之外的位是否可信。
+    ///
+    /// 旧内核对任何 id 都只填 SUPPORTED/FORCED，所以缺 STICKY 位在那种内核上
+    /// 表示"它不认识这个位"，而不是"这个扩展没有开关"。
+    pub const fn caps_known(&self) -> bool {
+        self.api_version > 0
+    }
+
+    /// 能力位查询，旧内核一律返回 false。
+    pub const fn has_cap(&self, cap: u32) -> bool {
+        self.caps_known() && self.caps & cap != 0
+    }
+}
+
+/// 内核支持的扩展 ABI 版本，每进程只探测一次。
+pub fn extension_api_version() -> u32 {
+    *EXTENSION_API_VERSION.get_or_init(|| {
+        let mut cmd = ksu_uapi::ksu_extension_cmd {
+            id: ksu_uapi::KSU_EXTENSION_ABI_PROBE_ID,
+            op: ksu_uapi::KSU_EXTENSION_ABI,
+            supported: 0,
+            api_version: 0,
+            value: 0,
+            user_ptr: 0,
+        };
+        match ksuctl(ksu_uapi::KSU_IOCTL_EXTENSION, &raw mut cmd) {
+            Ok(_) => cmd.api_version,
+            // 探测 id 对任何内核都越界，旧内核会用 -EINVAL 拒绝，
+            // 这个错误本身就是"没有能力协商"的信号。
+            Err(_) => 0,
+        }
+    })
+}
+
+/// 内核没有答复的 id 的状态：ABI 版本照填，让 caps_known 仍描述内核本身。
+pub fn unknown_extension_state() -> ExtensionState {
+    ExtensionState {
+        api_version: extension_api_version(),
+        ..Default::default()
+    }
+}
+
+/// 读取单个扩展的状态。
+pub fn get_extension(extension_id: u32) -> Result<ExtensionState> {
+    let api_version = extension_api_version();
+    let mut cmd = ksu_uapi::ksu_extension_cmd {
+        id: extension_id,
+        op: ksu_uapi::KSU_EXTENSION_GET,
+        supported: 0,
+        api_version,
+        value: 0,
+        user_ptr: 0,
+    };
+    ksuctl(ksu_uapi::KSU_IOCTL_EXTENSION, &raw mut cmd)?;
+    let caps = cmd.supported;
+    Ok(ExtensionState {
+        value: cmd.value,
+        caps,
+        api_version,
+        supported: caps & ksu_uapi::KSU_FEATURE_FLAG_SUPPORTED != 0,
+        forced: caps & ksu_uapi::KSU_EXTENSION_FLAG_FORCED != 0,
+    })
+}
+
+/// KSU_EXTENSION_ENUM 返回的一条处理函数描述。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionDescriptor {
+    pub id: u32,
+    pub name: String,
+    pub caps: u32,
+    pub min_api_version: u32,
+    pub forced: bool,
+}
+
+/// 枚举内核当前注册的全部扩展，ABI 2 以下返回空表。
+pub fn enumerate_extensions() -> Result<Vec<ExtensionDescriptor>> {
+    if extension_api_version() < 2 {
+        return Ok(Vec::new());
+    }
+    let api_version = extension_api_version();
+    let mut out = Vec::new();
+    for index in 0..ksu_uapi::ksu_extension_id_KSU_EXTENSION_MAX {
+        let mut desc: ksu_uapi::ksu_extension_desc = unsafe { std::mem::zeroed() };
+        let mut cmd = ksu_uapi::ksu_extension_cmd {
+            // 用越界探测 id，旧内核会直接拒绝而不是把 value 当置位写入。
+            id: ksu_uapi::KSU_EXTENSION_ABI_PROBE_ID,
+            op: ksu_uapi::KSU_EXTENSION_ENUM,
+            supported: 0,
+            api_version,
+            value: u64::from(index),
+            user_ptr: &raw mut desc as u64,
+        };
+        match ksuctl(ksu_uapi::KSU_IOCTL_EXTENSION, &raw mut cmd) {
+            Ok(_) => {
+                // 内核用 strscpy 写入，保证在 KSU_EXTENSION_NAME_LEN 内以 NUL 结尾。
+                let name = unsafe { std::ffi::CStr::from_ptr(desc.name.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned();
+                out.push(ExtensionDescriptor {
+                    id: desc.id,
+                    name,
+                    caps: desc.caps,
+                    min_api_version: desc.min_api_version,
+                    forced: desc.forced != 0,
+                });
+            }
+            Err(e) if e.downcast_ref::<io::Error>().and_then(io::Error::raw_os_error) == Some(libc::ENOENT) => break,
+            Err(e) => return Err(anyhow::Context::context(e, "枚举内核扩展失败")),
+        }
+    }
+    Ok(out)
+}
+
+/// 写入单个扩展的置位值。
+pub fn set_extension(extension_id: u32, value: u64) -> Result<()> {
+    let mut cmd = ksu_uapi::ksu_extension_cmd {
+        id: extension_id,
+        op: ksu_uapi::KSU_EXTENSION_SET,
+        supported: 0,
+        api_version: extension_api_version(),
+        value,
+        user_ptr: 0,
+    };
+    let ret = ksuctl(ksu_uapi::KSU_IOCTL_EXTENSION, &raw mut cmd)?;
+    if ret != 0 {
+        bail!("set_extension(id={extension_id}, value={value}) 失败: {ret}");
+    }
+    Ok(())
+}
+
+/// 统一扩展 ioctl：把具体负载挂在 user_ptr 上转发给内核处理函数。
+fn extension_io<T>(extension_id: u32, payload: *mut T) -> Result<i32> {
+    let mut cmd = ksu_uapi::ksu_extension_cmd {
+        id: extension_id,
+        op: ksu_uapi::KSU_EXTENSION_IO,
+        supported: 0,
+        api_version: extension_api_version(),
+        value: 0,
+        user_ptr: payload as u64,
+    };
+    ksuctl(ksu_uapi::KSU_IOCTL_EXTENSION, &raw mut cmd)
+}
+
+/// umount 路径列表的扩展入口（KSU_EXTENSION_UMOUNT_PATHS）。
+fn umount_paths_io(hdr: &mut ksu_uapi::ksu_extension_umount_cmd) -> Result<i32> {
+    extension_io(ksu_uapi::ksu_extension_id_KSU_EXTENSION_UMOUNT_PATHS, &raw mut *hdr)
+}
+
+/// 写入 CPU 伪装参数（KSU_EXTENSION_CPU_SPOOF）。
+pub fn set_spoof_cpu(
+    cpu_index: u32,
+    midr: u32,
+    bogomips: u32,
+    hwcap: u64,
+    hwcap2: u64,
+) -> Result<()> {
+    let mut cmd = ksu_uapi::ksu_set_spoof_cpu_cmd {
+        cpu_index,
+        midr,
+        bogomips,
+        hwcap,
+        hwcap2,
+    };
+    extension_io(ksu_uapi::ksu_extension_id_KSU_EXTENSION_CPU_SPOOF, &raw mut cmd)?;
+    Ok(())
+}
+
+/// 读取内核里的 umount 路径列表，返回内核拼好的文本。
+pub fn umount_list_list() -> Result<String> {
+    const BUF_SIZE: usize = 4096;
+    let mut buffer = vec![0u8; BUF_SIZE];
+    let mut hdr: ksu_uapi::ksu_extension_umount_cmd = unsafe { std::mem::zeroed() };
+    hdr.op = ksu_uapi::KSU_UMOUNT_IO_OP_LIST;
+    hdr.payload.list.arg = buffer.as_mut_ptr() as u64;
+    hdr.payload.list.buf_size = BUF_SIZE as u32;
+    umount_paths_io(&mut hdr)?;
+    let len = buffer.iter().position(|&b| b == 0).unwrap_or(BUF_SIZE);
+    Ok(String::from_utf8_lossy(&buffer[..len]).into_owned())
+}

@@ -541,8 +541,39 @@ enum Kernel {
         #[command(subcommand)]
         command: UmountOp,
     },
+    /// Read or write kernel extension state (KSU_IOCTL_EXTENSION)
+    Extension {
+        #[command(subcommand)]
+        command: ExtensionOp,
+    },
+    /// Fake CPU identity (MIDR/HWCAP/BogoMIPS) at runtime
+    SpoofCpu {
+        /// target CPU index (0..=num_possible_cpus-1)
+        #[arg(short, long)]
+        cpu: u32,
+        /// MIDR value, hex (e.g. 0x413fd0c1)
+        #[arg(short, long, value_parser = parse_hex_u32)]
+        midr: u32,
+        /// BogoMIPS value, decimal (e.g. 2400)
+        #[arg(short, long, default_value_t = 0)]
+        bogomips: u32,
+        /// primary ELF hwcap mask, hex
+        #[arg(long, value_parser = parse_hex_u64, default_value_t = 0)]
+        hwcap: u64,
+        /// secondary ELF hwcap2 mask, hex
+        #[arg(long, value_parser = parse_hex_u64, default_value_t = 0)]
+        hwcap2: u64,
+    },
     /// Notify that module is mounted
     NotifyModuleMounted,
+}
+
+fn parse_hex_u32(raw: &str) -> std::result::Result<u32, std::num::ParseIntError> {
+    u32::from_str_radix(raw.trim_start_matches("0x").trim_start_matches("0X"), 16)
+}
+
+fn parse_hex_u64(raw: &str) -> std::result::Result<u64, std::num::ParseIntError> {
+    u64::from_str_radix(raw.trim_start_matches("0x").trim_start_matches("0X"), 16)
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -555,13 +586,47 @@ enum UmountOp {
         #[arg(short, long, default_value = "0")]
         flags: u32,
     },
-    /// Delete mount point from umount list
+    /// Remove mount point from kernel and saved config
+    Remove {
+        /// mount point path
+        mnt: String,
+    },
+    /// Delete mount point from kernel list only (keeps saved config)
     Del {
         /// mount point path
         mnt: String,
     },
-    /// Wipe all entries from umount list
+    /// List all mount points in the kernel umount list
+    List,
+    /// Save the kernel umount list to disk
+    Save,
+    /// Re-apply the saved umount list to the kernel
+    Apply,
+    /// Wipe the kernel list and delete the saved config
+    ClearCustom,
+    /// Wipe all entries from kernel umount list only
     Wipe,
+}
+
+/// Extension subcommand: read or write a kernel extension's sticky state.
+#[derive(clap::Subcommand, Debug)]
+enum ExtensionOp {
+    /// Probe the kernel extension ABI and list every registered handler
+    List,
+    /// Show one extension's state by numeric id
+    Get {
+        /// extension id (0=KPM 1=CPU_SPOOF 2=UMOUNT_PATHS 3=DYNAMIC_MANAGER 4=SUSFS 5=VERSION_SPOOF)
+        id: u32,
+    },
+    /// Set one extension's sticky value by numeric id
+    Set {
+        /// extension id
+        id: u32,
+        /// sticky value, usually 1 to enable and 0 to disable
+        value: u64,
+    },
+    /// Check whether the kernel speaks extension ABI >= 2 and counts handlers
+    Check,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -915,13 +980,73 @@ pub fn run() -> Result<()> {
             crate::resetprop::resetprop_main(&full_args)
         }
 
+        Commands::Extension { command } => match command {
+            ExtensionOp::Check => {
+                let abi = ksucalls::extension_api_version();
+                if abi == 0 {
+                    println!("内核没有扩展框架（扩展 ABI 0）");
+                } else {
+                    println!("扩展 ABI 版本: {abi}");
+                }
+                let handlers = if abi >= 2 { ksucalls::enumerate_extensions()?.len() } else { 0 };
+                println!("已注册处理函数: {handlers}");
+                Ok(())
+            }
+            ExtensionOp::List => {
+                let abi = ksucalls::extension_api_version();
+                println!("扩展 ABI 版本: {abi}");
+                let list = ksucalls::enumerate_extensions()?;
+                if list.is_empty() {
+                    println!("内核没有上报处理函数（ABI < 2 或未注册任何扩展）");
+                } else {
+                    println!("{:>3}  {:<18} {:<12} {:<8} {}", "ID", "NAME", "CAPS", "MIN_ABI", "FORCED");
+                    for d in list {
+                        println!(
+                            "{:>3}  {:<18} 0x{:08x}   {:<8} {}",
+                            d.id, d.name, d.caps, d.min_api_version, d.forced
+                        );
+                    }
+                }
+                Ok(())
+            }
+            ExtensionOp::Get { id } => {
+                let st = ksucalls::get_extension(id)?;
+                println!("id          : {id}");
+                println!("value       : 0x{:x}", st.value);
+                println!("caps        : 0x{:08x}", st.caps);
+                println!("api_version : {}", st.api_version);
+                println!("supported   : {}", st.supported);
+                println!("forced      : {}", st.forced);
+                Ok(())
+            }
+            ExtensionOp::Set { id, value } => {
+                ksucalls::set_extension(id, value)?;
+                println!("已写入 id={id} value=0x{value:x}");
+                Ok(())
+            }
+        },
         Commands::Kernel { command } => match command {
             Kernel::NukeExt4Sysfs { mnt } => ksucalls::nuke_ext4_sysfs(&mnt),
             Kernel::Umount { command } => match command {
                 UmountOp::Add { mnt, flags } => ksucalls::umount_list_add(&mnt, flags),
+                UmountOp::Remove { mnt } => umount::remove_umount_entry_from_config(&mnt),
                 UmountOp::Del { mnt } => ksucalls::umount_list_del(&mnt),
+                UmountOp::List => {
+                    print!("{}", ksucalls::umount_list_list()?);
+                    Ok(())
+                }
+                UmountOp::Save => umount::save_umount_config(),
+                UmountOp::Apply => umount::apply_umount_config(),
+                UmountOp::ClearCustom => umount::clear_umount_config(),
                 UmountOp::Wipe => ksucalls::umount_list_wipe(),
             },
+            Kernel::SpoofCpu {
+                cpu,
+                midr,
+                bogomips,
+                hwcap,
+                hwcap2,
+            } => ksucalls::set_spoof_cpu(cpu, midr, bogomips, hwcap, hwcap2),
             Kernel::NotifyModuleMounted => {
                 ksucalls::report_module_mounted();
                 Ok(())

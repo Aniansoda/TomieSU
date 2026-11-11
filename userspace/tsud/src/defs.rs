@@ -21,6 +21,7 @@ mod android {
     pub const PROFILE_TEMPLATE_DIR: &str = concatcp!(PROFILE_DIR, "templates/");
 
     pub const KSURC_PATH: &str = concatcp!(WORKING_DIR, ".ksurc");
+    pub const UMOUNT_CONFIG_PATH: &str = concatcp!(WORKING_DIR, ".umount");
     pub const DAEMON_PATH: &str = concatcp!(ADB_DIR, "tsud");
     pub const LIBADBROOT_PATH: &str = concatcp!(LIBRARY_DIR, "libadbroot.so");
 
