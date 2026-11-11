@@ -141,8 +141,11 @@ endif
 ifeq ($(CONFIG_WIND),y)
 ccflags-y += -DCONFIG_WIND=1
 # Wind 的跳板/影子页代码对 void* 定长缓冲做 memset，clang fortify 会误报
-# __write_overflow_field；该告警类别在 wind 变体里整体关闭，不影响非 wind 变体。
-ccflags-y += -Wno-attributes
+# __write_overflow_field。新版 clang 用 -Wno-attribute-warning 关掉这类
+# warning attribute，5.10 的老 clang 没有这个开关（-Werror 下会直接报
+# unknown warning option），所以用 cc-option 探测后按需添加。
+wind_warn_flag := $(call cc-option,-Wno-attribute-warning,)
+ccflags-y += $(wind_warn_flag)
 tomiesu-objs += wind/sym.o
 tomiesu-objs += wind/memory.o
 tomiesu-objs += wind/process.o
@@ -152,8 +155,8 @@ tomiesu-objs += wind/breakpoint.o
 # breakpoint.c 的跳板/影子页代码对 void* 缓冲区做定长 memset，
 # clang 的 fortify 会把它误判成"越界写字段"（__write_overflow_field）。
 # 这些缓冲由调用方保证 >= 32 字节，只关该文件的告警，不改语义。
-CFLAGS_breakpoint.o += -Wno-attributes
-CFLAGS_wind/breakpoint.o += -Wno-attributes
+CFLAGS_breakpoint.o += $(wind_warn_flag)
+CFLAGS_wind/breakpoint.o += $(wind_warn_flag)
 tomiesu-objs += wind/kgsl.o
 tomiesu-objs += wind/gyro.o
 tomiesu-objs += wind/nlcomm.o
