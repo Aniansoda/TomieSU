@@ -94,6 +94,8 @@ jobs:
         shell: bash
         run: |
           sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" python3 tools/build-matrix.py --priority-already-passed --kmi android12-5.10 --stage-assets
+          # 12-5.10 也要 wind 变体，与其余 7 个 KMI 保持一致
+          sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-lkm.sh android12-5.10 wind
           sudo --preserve-env=TOMIESU_SIGNING_PROFILE,TOMIESU_REQUIRE_RELEASE_SIGNING,JAVA_HOME_21_X64,TOMIESU_JDK_HOME env TOMIESU_ROOT="$GITHUB_WORKSPACE" TOMIESU_CACHE="$TOMIESU_CACHE" bash tools/build-rust.sh host-tests
 
       - name: Build remaining KMI modules
