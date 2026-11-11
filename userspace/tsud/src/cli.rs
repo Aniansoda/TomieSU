@@ -22,6 +22,7 @@ struct Args {
 }
 
 #[derive(clap::Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Verify or install a complete active-slot image transaction
     Images {
