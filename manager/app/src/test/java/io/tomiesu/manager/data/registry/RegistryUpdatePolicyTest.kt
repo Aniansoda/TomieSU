@@ -33,7 +33,7 @@ class RegistryUpdatePolicyTest {
     private fun decide(
         updateJson: String = registryUpdateJson,
         zipUrl: String = zip("v2"),
-        versionCode: Int = 200,
+        versionCode: Long = 200L,
         inIndex: Boolean? = true,
         d: ApiModuleDetail? = detail,
     ) = RegistryUpdatePolicy.decide(base, updateJson, zipUrl, versionCode, inIndex, d)
@@ -45,7 +45,7 @@ class RegistryUpdatePolicyTest {
         assertEquals(zip("v2"), v.zipUrl)
         assertEquals("v2", v.release.tag)
         // An author-hosted updateJson that points at a registry release is verified as well.
-        val a = decide(updateJson = authorUpdateJson, zipUrl = zip("v1"), versionCode = 100) as UpdateVerification.Registry
+        val a = decide(updateJson = authorUpdateJson, zipUrl = zip("v1"), versionCode = 100L) as UpdateVerification.Registry
         assertEquals(ExpectedFile(200, sha1), a.expected)
         // Case differences in scheme / host do not defeat the match.
         assertTrue(decide(zipUrl = "HTTPS://GitHub.com/owner/repo/releases/download/v2/foo.zip") is UpdateVerification.Registry)
@@ -55,9 +55,9 @@ class RegistryUpdatePolicyTest {
     fun versionCodePicksBetweenReleasesSharingAUrl() {
         val shared = "https://github.com/owner/repo/releases/download/latest/foo.zip"
         val d = detail.copy(releases = listOf(release("v2", 200, sha2, shared), release("v1", 100, sha1, shared)))
-        assertEquals(ExpectedFile(200, sha1), (decide(zipUrl = shared, versionCode = 100, d = d) as UpdateVerification.Registry).expected)
-        assertEquals(ExpectedFile(300, sha2), (decide(zipUrl = shared, versionCode = 200, d = d) as UpdateVerification.Registry).expected)
-        assertTrue(decide(zipUrl = shared, versionCode = 999, d = d) is UpdateVerification.Rejected)
+        assertEquals(ExpectedFile(200, sha1), (decide(zipUrl = shared, versionCode = 100L, d = d) as UpdateVerification.Registry).expected)
+        assertEquals(ExpectedFile(300, sha2), (decide(zipUrl = shared, versionCode = 200L, d = d) as UpdateVerification.Registry).expected)
+        assertTrue(decide(zipUrl = shared, versionCode = 999L, d = d) is UpdateVerification.Rejected)
     }
 
     @Test
