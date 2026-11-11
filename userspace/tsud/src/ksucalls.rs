@@ -479,11 +479,13 @@ impl ExtensionState {
     ///
     /// 旧内核对任何 id 都只填 SUPPORTED/FORCED，所以缺 STICKY 位在那种内核上
     /// 表示"它不认识这个位"，而不是"这个扩展没有开关"。
+    #[allow(dead_code)]
     pub const fn caps_known(&self) -> bool {
         self.api_version > 0
     }
 
     /// 能力位查询，旧内核一律返回 false。
+    #[allow(dead_code)]
     pub const fn has_cap(&self, cap: u32) -> bool {
         self.caps_known() && self.caps & cap != 0
     }
@@ -510,6 +512,7 @@ pub fn extension_api_version() -> u32 {
 }
 
 /// 内核没有答复的 id 的状态：ABI 版本照填，让 caps_known 仍描述内核本身。
+#[allow(dead_code)]
 pub fn unknown_extension_state() -> ExtensionState {
     ExtensionState {
         api_version: extension_api_version(),

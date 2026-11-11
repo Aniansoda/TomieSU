@@ -1002,10 +1002,7 @@ pub fn run() -> Result<()> {
                 if list.is_empty() {
                     println!("内核没有上报处理函数（ABI < 2 或未注册任何扩展）");
                 } else {
-                    println!(
-                        "{:>3}  {:<18} {:<12} {:<8} {}",
-                        "ID", "NAME", "CAPS", "MIN_ABI", "FORCED"
-                    );
+                    println!("  ID  NAME                     CAPS        MIN_ABI  FORCED");
                     for d in list {
                         println!(
                             "{:>3}  {:<18} 0x{:08x}   {:<8} {}",
@@ -1038,7 +1035,8 @@ pub fn run() -> Result<()> {
                 UmountOp::Remove { mnt } => ksucalls::remove_umount_entry_from_config(&mnt),
                 UmountOp::Del { mnt } => ksucalls::umount_list_del(&mnt),
                 UmountOp::List => {
-                    print!("{}", ksucalls::umount_list_list()?);
+                    let list = ksucalls::umount_list_list()?;
+                    print!("{list}");
                     Ok(())
                 }
                 UmountOp::Save => ksucalls::save_umount_config(),
