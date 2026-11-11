@@ -236,7 +236,7 @@ object AiModuleController {
         try {
             val request = Request.Builder()
                 .url(asset.url)
-                .header("User-Agent", "SukiSU-Manager-AI/1.0")
+                .header("User-Agent", "TomieSU-Manager-AI/1.0")
                 .build()
             ksuApp.okhttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")

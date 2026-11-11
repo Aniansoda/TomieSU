@@ -40,7 +40,7 @@ data class HomeUiState(
     val ciUpdateBusy: Boolean = false,
     val showFullStatus: Boolean = true,
     val hideHomeWarnings: Boolean = false,
-    // Root without a SukiSU kernel: pages are browsable but kernel features are unavailable.
+    // Root without a TomieSU kernel: pages are browsable but kernel features are unavailable.
     val isPreviewMode: Boolean = false,
     val hideVersionMismatchWarning: Boolean = false,
     // Whether the kernel supports the version-spoof extension. When false the

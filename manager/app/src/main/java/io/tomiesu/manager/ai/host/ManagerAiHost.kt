@@ -23,7 +23,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * SukiSU manager implementation of the assistant host SPI.
+ * TomieSU manager implementation of the assistant host SPI.
  *
  * Everything manager-specific lives in this module's host package; the `:ai`
  * library only sees the interfaces in [AiHost].

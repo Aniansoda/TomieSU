@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::utils;
 
-/// Find PIDs of processes running in the KernelSU su domain (u:r:ksu:s0).
+/// Find PIDs of processes running in the TomieSU su domain (u:r:ksu:s0).
 /// Returns a list of PIDs excluding our own.
 fn find_su_domain_pids() -> Vec<i32> {
     let my_pid = std::process::id() as i32;
@@ -107,7 +107,7 @@ fn close_ksu_fds() {
 }
 
 pub fn unload() -> Result<()> {
-    info!("unload: starting KernelSU unload sequence");
+    info!("unload: starting TomieSU unload sequence");
 
     // 模块名已从 kernelsu 改为 tomiesu，旧镜像上仍可能是 kernelsu，两个都认。
     let module_params = if Path::new("/sys/module/tomiesu/parameters").exists() {

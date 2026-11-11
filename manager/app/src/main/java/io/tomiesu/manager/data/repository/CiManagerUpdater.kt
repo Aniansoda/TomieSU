@@ -69,7 +69,7 @@ class CiManagerUpdater(private val context: Context) {
     private fun saveToDownloads(apk: File, url: String) {
         val name = url.toUri().lastPathSegment
             ?.substringAfterLast('/')?.substringAfterLast('\\')
-            ?.takeIf { it.endsWith(".apk") } ?: "SukiSU-update.apk"
+            ?.takeIf { it.endsWith(".apk") } ?: "TomieSU-update.apk"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
             val values = ContentValues().apply {

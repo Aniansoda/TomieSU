@@ -1,14 +1,14 @@
 # TomieSU v1.7.6 (17601) 交付说明
 
-基线：MikSU（MilkSU）→ 改名 TomieSU，功能树对齐 SukiSU-Ultra 全量 + XEKernelPro 隐藏环境。
+基线：MikSU（MilkSU）→ 改名 TomieSU，功能树对齐 TomieSU-Ultra 全量 + XEKernelPro 隐藏环境。
 
 ## 一、本次全量同步结果
 
 | 项 | 数值 |
 |---|---|
-| 同步 SukiSU Kotlin 文件 | 490 |
+| 同步 TomieSU Kotlin 文件 | 490 |
 | 保留 TomieSU 定制文件 | 11（ghostlock 20 个子文件 + hidepack 4 + XcShim + Stealth 3 + Natives 2） |
-| 删除 MikSU 独有子系统 | 26（自我更新/管理器隐藏链，与 SukiSU model 冲突） |
+| 删除 MikSU 独有子系统 | 26（自我更新/管理器隐藏链，与 TomieSU model 冲突） |
 | 版号 | versionName 1.7.6 / versionCode 17601 |
 
 ### 已补齐的四块子系统
@@ -22,7 +22,7 @@
 
 ### native 层
 
-`cpp/` 全量换为 SukiSU 版（jni.cc 468 / ksu.cc 360 / ksu.h 108 / uapi 8 头），JNI 前缀改 `Java_io_tomiesu_manager_NativeBridge_*`，共 29 个导出。
+`cpp/` 全量换为 TomieSU 版（jni.cc 468 / ksu.cc 360 / ksu.h 108 / uapi 8 头），JNI 前缀改 `Java_io_tomiesu_manager_NativeBridge_*`，共 29 个导出。
 
 - 补 `KSU_GET_INFO_FLAG_MANAGER_HIDE = (1U << 6)` 到 `uapi/supercall.h`
 - 回填 MikSU 独有 `is_manager_hide_supported()` / `verify_manager_access()`（ksu.cc + jni.cc）
@@ -45,7 +45,7 @@ manager/build.gradle.kts
 
 | 项 | 结果 |
 |---|---|
-| `values-zh-rCN/strings.xml` | 以 SukiSU 完整中文（1618 条）为底，补 TomieSU 独有 33 条 → **1647 / 1647，缺 0** |
+| `values-zh-rCN/strings.xml` | 以 TomieSU 完整中文（1618 条）为底，补 TomieSU 独有 33 条 → **1647 / 1647，缺 0** |
 | `values-zh-rCN/milksu.xml` | 60 条对齐 + `home_support_project_url` |
 | 重复资源 | 删除 `kpm_title` / `kpm_empty` / `kpm_control` / `home_susfs_version` 与 milksu.xml 的冲突 |
 | 硬编码英文 | `SplashScreen` 两句、`AiFeatureCatalog` 7 处响应文案已汉化；`ID:` / `META` / `ZYGISK` / `SHA-256:` / `UID:` / `LOCAL` / `REMOTE` / `LKM ·` 属技术标识，保留 |
@@ -106,7 +106,7 @@ adb shell /data/app/*/io.tomiesu.manager-*/lib/arm64/libtsud.so late-load --allo
 | 项 | 说明 |
 |---|---|
 | 实机运行 | 全部改动仅静态编译通过，未上真机；KPM / SuSFS 依赖内核侧 `tsud` 命令存在 |
-| tsud 子命令覆盖 | `tsud` 已含 kpm/susfs/dynamic_manager/umount 命令族（SukiSU 同源）；`mount_hide` 本树仍无 |
+| tsud 子命令覆盖 | `tsud` 已含 kpm/susfs/dynamic_manager/umount 命令族（TomieSU 同源）；`mount_hide` 本树仍无 |
 | 删除的 26 个文件 | MikSU 自我更新链（ManagerApk/ManagerTransfer/ManagerHiding/CoreManagerUpdater 等）备份在 `/tmp/miksu_extra_bak/`，需要时恢复 |
 | GhostLock | 需 `uname -r` 命中 85 个 profile 之一 |
 | 一键隐藏远端 | `http://42.193.123.248:5244/d/hidepack/manifest.json` 未实测 |
@@ -116,7 +116,7 @@ adb shell /data/app/*/io.tomiesu.manager-*/lib/arm64/libtsud.so late-load --allo
 
 ### 基座选择
 
-**用树内 `kernel/`，不要换 SukiSU 内核仓库。**
+**用树内 `kernel/`，不要换 TomieSU 内核仓库。**
 
 证据：
 
@@ -124,10 +124,10 @@ adb shell /data/app/*/io.tomiesu.manager-*/lib/arm64/libtsud.so late-load --allo
 |---|---|
 | `kernel/MILKSU_HOOK_PROVENANCE.json` | product=TomieSU，backend=`KernelSU-Next ARM64 sys_enter dispatcher`，uapi_version=6 |
 | `uapi/supercall.h` vs `manager/app/src/main/cpp/uapi/supercall.h` | `diff` 完全相同 |
-| 内核独有能力 | `feature/avc_spoof`、`feature/selinux_hide`、`preinit/`、`susfs/`、`milksu_root.h` —— SukiSU 内核没有 |
-| SukiSU 内核多出的 | `extension/` 框架（KPM/SuSFS extension、version_spoof、cpu_spoof）、`feature/uts_spoof` |
+| 内核独有能力 | `feature/avc_spoof`、`feature/selinux_hide`、`preinit/`、`susfs/`、`milksu_root.h` —— TomieSU 内核没有 |
+| TomieSU 内核多出的 | `extension/` 框架（KPM/SuSFS extension、version_spoof、cpu_spoof）、`feature/uts_spoof` |
 
-结论：基座留树内，只从 SukiSU 内核搬缺口。
+结论：基座留树内，只从 TomieSU 内核搬缺口。
 
 ### 已打补丁（补齐管理器需要的 3 个 ioctl）
 
@@ -137,7 +137,7 @@ adb shell /data/app/*/io.tomiesu.manager-*/lib/arm64/libtsud.so late-load --allo
 | `kernel/Kbuild:149` | 新增 `-DKSU_VERSION_FULL=\"v$(TOMIESU_VERSION_NAME)-$(KSU_VERSION)\"` |
 | `kernel/Kbuild:57` | 新增 `kernelsu-objs += feature/uts_spoof.o` |
 | `kernel/include/ksu.h` | 补 `KSU_VERSION_FULL` 兜底默认值 |
-| `kernel/feature/uts_spoof.{c,h}` | 新增，从 SukiSU 移植（62+11 行），`ksu_set_spoof_version()` / `ksu_spoof_version()` |
+| `kernel/feature/uts_spoof.{c,h}` | 新增，从 TomieSU 移植（62+11 行），`ksu_set_spoof_version()` / `ksu_spoof_version()` |
 | `kernel/supercall/dispatch.c` | 新增 3 个 handler + 3 条注册 |
 
 新增 handler：

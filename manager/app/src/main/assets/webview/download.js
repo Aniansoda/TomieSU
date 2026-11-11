@@ -110,7 +110,7 @@
         if (!anchor || !anchor.href) return;
         if (new URL(anchor.href, location.href).hostname === INTERNAL_BLOB_HOST) return;
         event.preventDefault();
-        handleDownload(anchor).catch((error) => console.error('KernelSU download failed', error));
+        handleDownload(anchor).catch((error) => console.error('TomieSU download failed', error));
     }, true);
 
     const originalClick = HTMLAnchorElement.prototype.click;
@@ -119,7 +119,7 @@
             if (new URL(this.href, location.href).hostname === INTERNAL_BLOB_HOST) {
                 return originalClick.apply(this, arguments);
             }
-            handleDownload(this).catch((error) => console.error('KernelSU download failed', error));
+            handleDownload(this).catch((error) => console.error('TomieSU download failed', error));
             return;
         }
         return originalClick.apply(this, arguments);

@@ -69,7 +69,7 @@ fn lock(path: &Path) -> Result<File> {
 
 fn migrate_kpm(source: &Path, destination: &Path) -> Result<()> {
     inspect_directories(source, None)?;
-    // KernelSU installations may relocate the working directory via /data/adb/tomiesu.
+    // TomieSU installations may relocate the working directory via /data/adb/tomiesu.
     // Only this boundary may be a link; TomieSU's own state remains real directories.
     let working_directory = destination.parent().and_then(Path::parent);
     inspect_directories(destination, working_directory)?;

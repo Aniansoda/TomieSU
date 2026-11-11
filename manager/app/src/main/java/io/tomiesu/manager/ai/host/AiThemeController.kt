@@ -379,7 +379,7 @@ object AiThemeController : AiThemeService {
         val launched = withContext(Dispatchers.Main) {
             runCatching {
                 ksuApp.startActivity(
-                    Intent.createChooser(intent, "SukiSU theme")
+                    Intent.createChooser(intent, "TomieSU theme")
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }.isSuccess

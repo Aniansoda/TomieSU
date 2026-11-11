@@ -74,7 +74,7 @@ private fun checkReleaseVersion(endpoint: String, isCi: Boolean): LatestVersionI
                     ?.groupValues?.get(1)?.toLongOrNull() ?: return LatestVersionInfo()
                 val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: return LatestVersionInfo()
                 val apkPattern = Regex(
-                    """^SukiSU_.+_${versionCode}-${Regex.escape(abi)}-release\.apk$"""
+                    """^TomieSU_.+_${versionCode}-${Regex.escape(abi)}-release\.apk$"""
                 )
                 val apk = (0 until assets.length()).asSequence()
                     .mapNotNull { assets.optJSONObject(it) }
@@ -89,8 +89,8 @@ private fun checkReleaseVersion(endpoint: String, isCi: Boolean): LatestVersionI
                 return LatestVersionInfo(versionCode, downloadUrl, changelog)
             }
             val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: return LatestVersionInfo()
-            val archPattern = Regex("""^SukiSU_v(.+?)_(\d+)-${Regex.escape(abi)}-release\.apk$""")
-            val universalPattern = Regex("""^SukiSU_v(.+?)_(\d+)-release\.apk$""")
+            val archPattern = Regex("""^TomieSU_v(.+?)_(\d+)-${Regex.escape(abi)}-release\.apk$""")
+            val universalPattern = Regex("""^TomieSU_v(.+?)_(\d+)-release\.apk$""")
             val apkAssets = (0 until assets.length()).map { assets.getJSONObject(it) }
             // Prefer the device-specific asset, falling back to an actual universal APK only.
             for (pattern in listOf(archPattern, universalPattern)) {

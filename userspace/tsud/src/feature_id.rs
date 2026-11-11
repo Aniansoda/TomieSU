@@ -69,7 +69,7 @@ impl FeatureId {
                 "SELinux Hide - sanitize /sys/fs/selinux access results for app UIDs"
             }
             Self::ShellSuAdbOnly => {
-                "Shell SU ADB Only - when shell is granted root, additionally require the process to be spawned by adbd or a KernelSU root process (ksu domain)"
+                "Shell SU ADB Only - when shell is granted root, additionally require the process to be spawned by adbd or a TomieSU root process (ksu domain)"
             }
             Self::AvcSpoof => "AVC Spoof - replace the root domain in SELinux audit logs",
         }

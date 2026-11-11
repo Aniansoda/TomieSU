@@ -834,7 +834,7 @@ pub fn run() -> Result<()> {
         }
         Commands::Services => {
             if ksucalls::get_version() <= 0 {
-                info!("KernelSU not available, exiting services");
+                info!("TomieSU not available, exiting services");
                 std::process::exit(0);
             }
             init_event::on_services();

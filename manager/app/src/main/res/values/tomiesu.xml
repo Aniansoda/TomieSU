@@ -2,7 +2,7 @@
 <resources>
     <string name="tomiesu_system">System</string>
     <string name="tomiesu_system_summary">KPM integration and SUSFS</string>
-    <string name="tomiesu_about_source">TomieSU: %1$s. Based on KernelSU, KernelSU-Next and KPatch-Next. Upstream community: %2$s</string>
+    <string name="tomiesu_about_source">TomieSU: %1$s. Based on TomieSU and KPatch-Next. Upstream community: %2$s</string>
     <string name="settings_manager_hide">Hide manager</string>
     <string name="settings_manager_hide_summary">Hide the manager app. Turn off to restore the original app.</string>
     <string name="settings_manager_hide_unsupported">Update the kernel to support manager hiding</string>
@@ -59,6 +59,6 @@
     <string name="home_susfs_version">SuSFS version</string>
     <string name="home_susfs_supported">Supported</string>
     <string name="home_support_development_title">Support development</string>
-    <string name="home_support_development_summary">Support TomieSU development. With thanks to KernelSU and KernelSU-Next.</string>
+    <string name="home_support_development_summary">Support TomieSU development. With thanks to TomieSU and KPatch-Next.</string>
     <string name="home_support_project_url" translatable="false">https://github.com/Xiaogugtfgdfhgrh/MikSU</string>
 </resources>

@@ -1018,7 +1018,7 @@ class ThemeStoreRepository(
             if (!bearerToken.isNullOrBlank()) {
                 requestBuilder
                     .header("Authorization", "Bearer $bearerToken")
-                    .header("X-Requested-With", "SukiSUThemeAdmin")
+                    .header("X-Requested-With", "TomieSUThemeAdmin")
                     .header("X-Client", "android")
             }
             val request = requestBuilder.build()

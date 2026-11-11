@@ -825,10 +825,10 @@ object ImageStorage {
         hasCardBackground: Boolean,
         stickerCount: Int,
     ): String = when {
-        listOf(hasBackground, hasCardBackground).count { it } + stickerCount > 1 -> "SukiSU-images.zip"
-        hasBackground -> "SukiSU-background.png"
-        hasCardBackground -> "SukiSU-home-card.png"
-        stickerCount > 0 -> "SukiSU-sticker.png"
-        else -> "SukiSU-images.zip"
+        listOf(hasBackground, hasCardBackground).count { it } + stickerCount > 1 -> "TomieSU-images.zip"
+        hasBackground -> "TomieSU-background.png"
+        hasCardBackground -> "TomieSU-home-card.png"
+        stickerCount > 0 -> "TomieSU-sticker.png"
+        else -> "TomieSU-images.zip"
     }
 }

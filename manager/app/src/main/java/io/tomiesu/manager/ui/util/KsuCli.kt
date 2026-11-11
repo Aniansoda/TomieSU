@@ -767,12 +767,12 @@ private fun installBootWithKpm(
         val kpmInput = kpmBoot ?: Uri.fromFile(lkmOutput)
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         check(downloads.exists() || downloads.mkdirs()) { "Cannot create Downloads directory" }
-        val finalOutput = File(downloads, "SukiSU_KPM_boot_${System.currentTimeMillis()}.img")
+        val finalOutput = File(downloads, "TomieSU_KPM_boot_${System.currentTimeMillis()}.img")
         val result = patchKpmBoot(kpmInput, onStdout, onStderr, finalOutput, undo = kpmUndo)
         if (kpmBoot != null || result.code != 0) {
             // A separate init_boot/vendor_boot artifact must not disappear
             // when the temporary directory is cleaned up.
-            val savedLkm = File(downloads, "SukiSU_LKM_${System.currentTimeMillis()}.img")
+            val savedLkm = File(downloads, "TomieSU_LKM_${System.currentTimeMillis()}.img")
             check(flashWithIO("chmod 644 ${SuSFSConfig.shellQuote(lkmOutput.absolutePath)}", onStdout, onStderr).isSuccess) { "Cannot export LKM output" }
             lkmOutput.copyTo(savedLkm)
             onStdout("- LKM output: ${savedLkm.absolutePath}")

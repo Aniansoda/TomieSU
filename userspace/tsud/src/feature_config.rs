@@ -39,7 +39,7 @@ pub fn load(path: &Path) -> Result<HashMap<u32, u64>> {
 }
 
 pub fn load_for_save(path: &Path) -> HashMap<u32, u64> {
-    // Match KernelSU: an invalid old config must not permanently block saving.
+    // Match TomieSU: an invalid old config must not permanently block saving.
     load(path).unwrap_or_else(|error| {
         log::warn!("Cannot load old feature configuration, rebuilding it: {error:#}");
         HashMap::new()

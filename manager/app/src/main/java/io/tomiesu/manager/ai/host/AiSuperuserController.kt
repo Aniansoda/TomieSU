@@ -55,7 +55,7 @@ object AiSuperuserController : AiSuperuserService {
                 add("superuser_set_global_su")
             }
             if (!manager || !root) {
-                put("reason", "A SukiSU kernel and root access are required.")
+                put("reason", "A TomieSU kernel and root access are required.")
             }
         }.toString()
     }
@@ -253,7 +253,7 @@ object AiSuperuserController : AiSuperuserService {
 
     private fun ensureRoot() {
         check(runCatching { Natives.isManager }.getOrDefault(false)) {
-            "Superuser control is unavailable: no SukiSU kernel is active."
+            "Superuser control is unavailable: no TomieSU kernel is active."
         }
         check(runCatching { rootAvailable() }.getOrDefault(false)) {
             "Superuser control is unavailable: the manager does not have root."

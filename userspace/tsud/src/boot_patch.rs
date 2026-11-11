@@ -508,7 +508,7 @@ pub struct BootPatchArgs {
     ramdisk: bool,
 }
 
-/// KernelSU module params, stored in ramdisk `/ksu_config` (boot-patch) or the
+/// TomieSU module params, stored in ramdisk `/ksu_config` (boot-patch) or the
 /// injected capsule (boot-patch-v2).
 #[derive(clap::Args, Debug, Default)]
 pub struct KsuConfigArgs {

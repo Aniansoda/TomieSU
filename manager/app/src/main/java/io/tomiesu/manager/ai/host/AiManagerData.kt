@@ -38,10 +38,10 @@ object AiManagerData {
 
     suspend fun superuserApps(limit: Int = 80): String = withContext(Dispatchers.IO) {
         check(runCatching { Natives.isManager }.getOrDefault(false)) {
-            "Superuser data is unavailable: no SukiSU kernel is active. Install SukiSU from the Install page and reboot."
+            "Superuser data is unavailable: no TomieSU kernel is active. Install TomieSU from the Install page and reboot."
         }
         check(runCatching { rootAvailable() }.getOrDefault(false)) {
-            "Superuser data is unavailable: the manager does not have root. Grant root in Superuser, or repair SukiSU."
+            "Superuser data is unavailable: the manager does not have root. Grant root in Superuser, or repair TomieSU."
         }
         val apps = SuperUserRepositoryImpl().getAppList().getOrThrow().first
         val granted = apps.filter { it.allowSu }
@@ -63,10 +63,10 @@ object AiManagerData {
 
     suspend fun installedModules(limit: Int = 80): String = withContext(Dispatchers.IO) {
         check(runCatching { Natives.isManager }.getOrDefault(false)) {
-            "Installed modules are unavailable: no SukiSU kernel is active. Install SukiSU from the Install page and reboot."
+            "Installed modules are unavailable: no TomieSU kernel is active. Install TomieSU from the Install page and reboot."
         }
         check(runCatching { rootAvailable() }.getOrDefault(false)) {
-            "Installed modules are unavailable: the manager does not have root. Grant root or repair SukiSU first."
+            "Installed modules are unavailable: the manager does not have root. Grant root or repair TomieSU first."
         }
         val modules = ModuleRepositoryImpl().getModules().getOrThrow()
         buildJsonObject {

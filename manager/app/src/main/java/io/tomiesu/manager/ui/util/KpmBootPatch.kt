@@ -78,7 +78,7 @@ fun patchKpmBoot(
         check(downloads.exists() || downloads.mkdirs()) { "Cannot create Downloads directory" }
         val id = System.currentTimeMillis()
         if (target != null) {
-            backup = File(downloads, "SukiSU_boot${suffix}_backup_$id.img")
+            backup = File(downloads, "TomieSU_boot${suffix}_backup_$id.img")
             source.copyTo(backup)
             check(backup.length() == source.length() && backup.length() > 0) { "Boot backup failed" }
             command("cmp -s ${q(source.absolutePath)} ${q(backup.absolutePath)}")
@@ -127,7 +127,7 @@ fun patchKpmBoot(
         // even if ksud ran in a root shell.
         command("chmod 644 ${q(output.absolutePath)}")
         if (target == null) {
-            val saved = outputFile ?: File(downloads, "SukiSU_KPM_boot_$id.img")
+            val saved = outputFile ?: File(downloads, "TomieSU_KPM_boot_$id.img")
             // Keep the selected-file flow usable without root; do not rely on
             // a shell redirection to a scoped-storage path.
             output.copyTo(saved, overwrite = false)

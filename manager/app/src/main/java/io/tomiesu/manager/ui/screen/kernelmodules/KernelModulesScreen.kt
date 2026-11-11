@@ -63,7 +63,7 @@ fun KernelModulesScreen() {
         },
         onCopy = { value ->
             val clipboard = context.getSystemService(ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(ClipData.newPlainText("SukiSU block_modules", value))
+            clipboard?.setPrimaryClip(ClipData.newPlainText("TomieSU block_modules", value))
             Toast.makeText(context, copiedText, Toast.LENGTH_SHORT).show()
         },
     )

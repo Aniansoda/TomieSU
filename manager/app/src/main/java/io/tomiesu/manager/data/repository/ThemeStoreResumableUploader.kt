@@ -300,7 +300,7 @@ internal class ThemeStoreResumableUploader(
     private fun accountRequest(path: String) = Request.Builder()
         .url(base + "account/api/uploads/" + path)
         .header("Authorization", "Bearer $bearerToken")
-        .header("X-Requested-With", "SukiSUThemeAdmin")
+        .header("X-Requested-With", "TomieSUThemeAdmin")
         .header("X-Client", "android")
 
     private suspend fun init(file: File, size: Long): ThemeStoreUploadSession {
