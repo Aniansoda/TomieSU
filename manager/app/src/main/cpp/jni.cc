@@ -484,6 +484,12 @@ Java_io_tomiesu_manager_NativeBridge_isManagerHideSupported(JNIEnv *, jobject) {
 }
 
 extern "C"
+JNIEXPORT jstring JNICALL
+Java_io_tomiesu_manager_NativeBridge_probeKernel(JNIEnv *env, jclass) {
+    return env->NewStringUTF(probe_kernel_info().c_str());
+}
+
+extern "C"
 JNIEXPORT jboolean JNICALL
 Java_io_tomiesu_manager_NativeBridge_verifyManagerAccess(JNIEnv *, jobject) {
     return verify_manager_access();

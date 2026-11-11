@@ -6,6 +6,7 @@
 #define KERNELSU_KSU_H
 
 #include <cstdint>
+#include <string>
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <utility>
@@ -32,6 +33,10 @@ bool is_manager();
 
 bool is_manager_hide_supported();
 bool verify_manager_access();
+
+// 诊断用：把 GET_INFO 的原始 rc/errno 与各字段原样吐出来，
+// 让"未安装"能区分是 ioctl 失败、flags 不全还是 uapi 版本不符。
+std::string probe_kernel_info();
 bool is_pr_build();
 
 using p_key_t = char[KSU_MAX_PACKAGE_NAME];

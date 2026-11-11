@@ -77,6 +77,9 @@ object Natives {
 
     fun verifyManagerAccess(): Boolean = nativeOr(false) { NativeBridge.verifyManagerAccess() }
 
+    /** 把 GET_INFO 的原始 rc/errno/flags 原样带回，用来区分"未安装"的具体原因。 */
+    fun probeKernel(): String = nativeOr("native unavailable") { NativeBridge.probeKernel() }
+
     val fullVersion: String?
         get() = nativeOr(null) { NativeBridge.getFullVersion() }
 

@@ -364,6 +364,32 @@ bool is_manager_hide_supported() {
     return verify_manager_access();
 }
 
+std::string probe_kernel_info() {
+    struct ksu_get_info_cmd info = {};
+    errno = 0;
+    long rc = ksuctl(KSU_IOCTL_GET_INFO, &info);
+    const int first_errno = errno;
+    if (rc < 0) {
+        struct ksu_get_info_cmd legacy = {};
+        errno = 0;
+        long lrc = ksuctl(KSU_IOCTL_GET_INFO_LEGACY, &legacy);
+        const int legacy_errno = errno;
+        char buf[320];
+        snprintf(buf, sizeof(buf),
+                 "GET_INFO rc=%ld errno=%d | LEGACY rc=%ld errno=%d | manager=%d expect_uapi=%u",
+                 rc, first_errno, lrc, legacy_errno, (int) is_manager(),
+                 (unsigned) KERNEL_SU_UAPI_VERSION);
+        return std::string(buf);
+    }
+    char buf[320];
+    snprintf(buf, sizeof(buf),
+             "GET_INFO rc=0 version=%u flags=0x%x(need 0x%x) uapi=%u(need %u) manager=%d",
+             info.version, info.flags,
+             (unsigned) (KSU_GET_INFO_FLAG_MANAGER | KSU_GET_INFO_FLAG_MANAGER_HIDE),
+             info.uapi_version, (unsigned) KERNEL_SU_UAPI_VERSION, (int) is_manager());
+    return std::string(buf);
+}
+
 bool verify_manager_access() {
     struct ksu_get_info_cmd info = {};
     struct ksu_new_get_allow_list_cmd list = {};

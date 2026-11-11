@@ -46,6 +46,7 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -453,6 +454,13 @@ private fun InactiveStatusCard(
                 fontWeight = FontWeight.Black,
             )
             if (notInstalled) {
+                // 把内核侧 GET_INFO 的原始返回贴出来，未安装时不再只能靠猜。
+                val probe = remember { runCatching { Natives.probeKernel() }.getOrDefault("probe failed") }
+                Text(
+                    text = probe,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = actions.onInstallClick) {
                         Text(customText(CustomTextKey.HOME_BTN_INSTALL))

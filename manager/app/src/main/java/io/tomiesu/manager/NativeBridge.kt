@@ -16,6 +16,8 @@ internal object NativeBridge {
     val isPrBuild: Boolean external get
 
     external fun verifyManagerAccess(): Boolean
+
+    external fun probeKernel(): String
     external fun uidShouldUmount(uid: Int): Boolean
     external fun getAppProfile(key: String?, uid: Int): Natives.Profile
     external fun setAppProfile(profile: Natives.Profile?): Boolean
